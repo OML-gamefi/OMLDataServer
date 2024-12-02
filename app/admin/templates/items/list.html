@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}道具管理 - 游戏管理后台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>道具管理</h2>
+            <a href="/admin/items/create" class="btn btn-primary">
+                <i class="bi bi-plus"></i> 新建道具
+            </a>
+        </div>
+        
+        <!-- 搜索框 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="get" class="row g-3">
+                    <div class="col-md-3">
+                        <input type="text" class="form-control" name="name" placeholder="道具名称" value="{{ request.query_params.get('name', '') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" name="type">
+                            <option value="">所有类型</option>
+                            {% for type in item_types %}
+                            <option value="{{ type.value }}" {% if request.query_params.get('type') == type.value %}selected{% endif %}>
+                                {{ type.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">搜索</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- 道具列表 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>名称</th>
+                                <th>类型</th>
+                                <th>品质</th>
+                                <th>等级</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in items %}
+                            <tr>
+                                <td>{{ item.id }}</td>
+                                <td>{{ item.name }}</td>
+                                <td>{{ item.type.name }}</td>
+                                <td>{{ item.quality.name }}</td>
+                                <td>{{ item.level }}</td>
+                                <td class="action-buttons">
+                                    <a href="/admin/items/{{ item.id }}/edit" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="deleteItem({{ item.id }})">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function deleteItem(id) {
+    if (confirm('确定要删除这个道具吗？')) {
+        fetch(`/admin/items/${id}`, {
+            method: 'DELETE',
+            credentials: 'same-origin'
+        }).then(response => {
+            if (response.ok) {
+                location.reload();
+            } else {
+                alert('删除失败');
+            }
+        });
+    }
+}
+</script>
+{% endblock %} 

@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}用户管理 - 游戏管理后台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>用户管理</h2>
+        </div>
+        
+        <!-- 搜索框 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="get" class="row g-3">
+                    <div class="col-md-3">
+                        <input type="text" class="form-control" name="username" placeholder="用户名" value="{{ request.query_params.get('username', '') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" name="role">
+                            <option value="">所有角色</option>
+                            {% for role in user_roles %}
+                            <option value="{{ role.value }}" {% if request.query_params.get('role') == role.value %}selected{% endif %}>
+                                {{ role.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" name="status">
+                            <option value="">所有状态</option>
+                            <option value="0">未激活</option>
+                            <option value="1">正常</option>
+                            <option value="2">已封禁</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">搜索</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- 用户列表 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>用户名</th>
+                                <th>角色</th>
+                                <th>状态</th>
+                                <th>注册时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for user in users %}
+                            <tr>
+                                <td>{{ user.id }}</td>
+                                <td>{{ user.username }}</td>
+                                <td>{{ user.role.name }}</td>
+                                <td>
+                                    {% if user.status == 0 %}
+                                        <span class="badge bg-warning">未激活</span>
+                                    {% elif user.status == 1 %}
+                                        <span class="badge bg-success">正常</span>
+                                    {% else %}
+                                        <span class="badge bg-danger">已封禁</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                <td class="action-buttons">
+                                    <button class="btn btn-sm btn-outline-primary" onclick="changeStatus({{ user.id }})">
+                                        {% if user.status == 2 %}
+                                            <i class="bi bi-unlock"></i>
+                                        {% else %}
+                                            <i class="bi bi-lock"></i>
+                                        {% endif %}
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-success" onclick="resetPassword({{ user.id }})">
+                                        <i class="bi bi-key"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function changeStatus(id) {
+    if (confirm('确定要改变该用户的状态吗？')) {
+        fetch(`/admin/users/${id}/status`, {
+            method: 'POST',
+            credentials: 'same-origin'
+        }).then(response => {
+            if (response.ok) {
+                location.reload();
+            } else {
+                alert('操作失败');
+            }
+        });
+    }
+}
+
+function resetPassword(id) {
+    if (confirm('确定要重置该用户的密码吗？')) {
+        fetch(`/admin/users/${id}/reset-password`, {
+            method: 'POST',
+            credentials: 'same-origin'
+        }).then(response => response.json())
+        .then(data => {
+            alert(`新密码: ${data.password}`);
+            location.reload();
+        })
+        .catch(() => alert('操作失败'));
+    }
+}
+</script>
+{% endblock %} 

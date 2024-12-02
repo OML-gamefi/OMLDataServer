@@ -21,3 +21,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # 创建Base类
 Base = declarative_base()
+
+# 添加 get_db 依赖函数
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

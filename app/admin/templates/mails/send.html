@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}发送邮件 - 游戏管理后台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">发送系统邮件</h3>
+            </div>
+            <div class="card-body">
+                <form id="mailForm">
+                    <!-- 收件人选择 -->
+                    <div class="mb-3">
+                        <label class="form-label">发送类型</label>
+                        <select class="form-select" name="send_type" id="sendType">
+                            <option value="all">全服邮件</option>
+                            <option value="level">等级范围</option>
+                            <option value="specific">指定用户</option>
+                        </select>
+                    </div>
+                    
+                    <!-- 等级范围选择 -->
+                    <div class="mb-3 level-range" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label class="form-label">最小等级</label>
+                                <input type="number" class="form-control" name="min_level" value="1">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">最大等级</label>
+                                <input type="number" class="form-control" name="max_level" value="100">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 指定用户 -->
+                    <div class="mb-3 specific-users" style="display: none;">
+                        <label class="form-label">用户ID列表（用逗号分隔）</label>
+                        <input type="text" class="form-control" name="user_ids" placeholder="例如: 1001,1002,1003">
+                    </div>
+                    
+                    <!-- 邮件内容 -->
+                    <div class="mb-3">
+                        <label class="form-label">邮件标题</label>
+                        <input type="text" class="form-control" name="title" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">邮件内容</label>
+                        <textarea class="form-control" name="content" rows="5" required></textarea>
+                    </div>
+                    
+                    <!-- 附件 -->
+                    <div class="mb-3">
+                        <label class="form-label">附件</label>
+                        <div id="attachments">
+                            <div class="row mb-2 attachment-item">
+                                <div class="col-md-4">
+                                    <select class="form-select" name="item_ids[]">
+                                        <option value="">选择道具</option>
+                                        {% for item in items %}
+                                        <option value="{{ item.id }}">{{ item.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="number" class="form-control" name="quantities[]" placeholder="数量">
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" name="bind_types[]">
+                                        {% for bind_type in bind_types %}
+                                        <option value="{{ bind_type.value }}">{{ bind_type.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <button type="button" class="btn btn-danger remove-attachment">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-secondary" id="addAttachment">
+                            <i class="bi bi-plus"></i> 添加附件
+                        </button>
+                    </div>
+                    
+                    <!-- 过期时间 -->
+                    <div class="mb-3">
+                        <label class="form-label">过期时间（天）</label>
+                        <input type="number" class="form-control" name="expire_days" value="7" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">发送邮件</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const sendType = document.getElementById('sendType');
+    const levelRange = document.querySelector('.level-range');
+    const specificUsers = document.querySelector('.specific-users');
+    
+    sendType.addEventListener('change', function() {
+        levelRange.style.display = this.value === 'level' ? 'block' : 'none';
+        specificUsers.style.display = this.value === 'specific' ? 'block' : 'none';
+    });
+    
+    // 添加附件
+    document.getElementById('addAttachment').addEventListener('click', function() {
+        const template = document.querySelector('.attachment-item').cloneNode(true);
+        document.getElementById('attachments').appendChild(template);
+    });
+    
+    // 删除附件
+    document.getElementById('attachments').addEventListener('click', function(e) {
+        if (e.target.closest('.remove-attachment')) {
+            const item = e.target.closest('.attachment-item');
+            if (document.querySelectorAll('.attachment-item').length > 1) {
+                item.remove();
+            }
+        }
+    });
+    
+    // 提交表单
+    document.getElementById('mailForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = {
+            send_type: formData.get('send_type'),
+            title: formData.get('title'),
+            content: formData.get('content'),
+            expire_days: parseInt(formData.get('expire_days')),
+            attachments: []
+        };
+        
+        // 根据发送类型添加参数
+        if (data.send_type === 'level') {
+            data.min_level = parseInt(formData.get('min_level'));
+            data.max_level = parseInt(formData.get('max_level'));
+        } else if (data.send_type === 'specific') {
+            data.user_ids = formData.get('user_ids').split(',').map(id => parseInt(id.trim()));
+        }
+        
+        // 处理附件
+        const itemIds = formData.getAll('item_ids[]');
+        const quantities = formData.getAll('quantities[]');
+        const bindTypes = formData.getAll('bind_types[]');
+        
+        for (let i = 0; i < itemIds.length; i++) {
+            if (itemIds[i] && quantities[i]) {
+                data.attachments.push({
+                    item_id: parseInt(itemIds[i]),
+                    quantity: parseInt(quantities[i]),
+                    bind_type: parseInt(bindTypes[i])
+                });
+            }
+        }
+        
+        // 发送请求
+        fetch('/admin/mails/send', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            alert(result.message);
+            if (result.status === 'success') {
+                location.href = '/admin/mails';
+            }
+        })
+        .catch(error => {
+            alert('发送失败');
+        });
+    });
+});
+</script>
+{% endblock %} 

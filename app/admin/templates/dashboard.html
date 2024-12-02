@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - 游戏管理后台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <h2>欢迎使用游戏管理后台</h2>
+    </div>
+    
+    <!-- 快速操作卡片 -->
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">道具管理</h5>
+                <p class="card-text">管理游戏中的所有道具</p>
+                <a href="/admin/items" class="btn btn-primary">进入管理</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">用户管理</h5>
+                <p class="card-text">管理游戏用户账号</p>
+                <a href="/admin/users" class="btn btn-primary">进入管理</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">邮件系统</h5>
+                <p class="card-text">发送系统邮件</p>
+                <a href="/admin/mails" class="btn btn-primary">进入管理</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">数据统计</h5>
+                <p class="card-text">查看游戏数据统计</p>
+                <a href="/admin/stats" class="btn btn-primary">查看统计</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

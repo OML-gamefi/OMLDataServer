@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}数据统计 - 游戏管理后台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- 概览卡片 -->
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">总用户数</h5>
+                <h2 class="card-text">{{ stats.total_users }}</h2>
+                <small class="text-muted">今日新增: {{ stats.new_users_today }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">在线用户</h5>
+                <h2 class="card-text">{{ stats.online_users }}</h2>
+                <small class="text-muted">峰值: {{ stats.max_online_users }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">总角色数</h5>
+                <h2 class="card-text">{{ stats.total_characters }}</h2>
+                <small class="text-muted">人均: {{ stats.avg_characters_per_user }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">系统邮件</h5>
+                <h2 class="card-text">{{ stats.total_mails }}</h2>
+                <small class="text-muted">今日: {{ stats.mails_today }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 图表 -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">用户等级分布</h5>
+                <canvas id="levelDistChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">在线用户趋势</h5>
+                <canvas id="onlineTrendChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 详细数据表格 -->
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">详细统计</h5>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>新增用户</th>
+                                <th>活跃用户</th>
+                                <th>在线峰值</th>
+                                <th>系统邮件</th>
+                                <th>道具创建</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in stats.daily_records %}
+                            <tr>
+                                <td>{{ record.date }}</td>
+                                <td>{{ record.new_users }}</td>
+                                <td>{{ record.active_users }}</td>
+                                <td>{{ record.peak_online }}</td>
+                                <td>{{ record.mails_sent }}</td>
+                                <td>{{ record.items_created }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // 等级分布图表
+    const levelCtx = document.getElementById('levelDistChart').getContext('2d');
+    new Chart(levelCtx, {
+        type: 'bar',
+        data: {
+            labels: {{ stats.level_dist.labels | tojson }},
+            datasets: [{
+                label: '用户数',
+                data: {{ stats.level_dist.data | tojson }},
+                backgroundColor: 'rgba(54, 162, 235, 0.5)'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+    
+    // 在线趋势图表
+    const onlineCtx = document.getElementById('onlineTrendChart').getContext('2d');
+    new Chart(onlineCtx, {
+        type: 'line',
+        data: {
+            labels: {{ stats.online_trend.labels | tojson }},
+            datasets: [{
+                label: '在线用户',
+                data: {{ stats.online_trend.data | tojson }},
+                borderColor: 'rgb(75, 192, 192)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+});
+</script>
+{% endblock %} 

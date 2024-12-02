@@ -17,6 +17,9 @@ from datetime import datetime
 import importlib
 import inspect
 from app.models import Account, UserToken  # 只导入常用的模型
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from app.admin.routes import admin_router
 
 # 修改日志配置
 logging.basicConfig(
@@ -396,7 +399,7 @@ async def get_current_user(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-# 添加一个datetime序列化函数
+# 添加 datetime 序列化处理函数
 def datetime_handler(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
@@ -515,3 +518,9 @@ async def read_user_devices(
         logger.error(f"获取用户设备列表失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise
+
+# 注册静态文件
+app.mount("/static", StaticFiles(directory="app/admin/static"), name="static")
+
+# 注册管理后台路由
+app.include_router(admin_router)

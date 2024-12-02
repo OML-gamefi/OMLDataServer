@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # CORS配置
     CORS_ORIGINS: str  # 直接使用与.env文件相同的变量名
 
+    # JWT配置
+    JWT_SECRET_KEY: str = "your-secret-key"  # 应该使用环境变量
+    JWT_ALGORITHM: str = "HS256"
+
     @property
     def cors_origins_list(self) -> List[str]:
         if not self.CORS_ORIGINS:
