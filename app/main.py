@@ -503,37 +503,50 @@ async def logout(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise
 
+# 创建公共请求头模型
+class CommonHeaders:
+    def __init__(
+        self,
+        token: str = Header(..., description="认证token"),
+        device_name: str = Header(..., description="设备名称"),
+        device_id: str = Header(..., description="设备ID"),
+        service_code: str = Header(..., description="服务代码：web-网页端，game-游戏端")
+    ):
+        self.token = token
+        self.device_name = device_name
+        self.device_id = device_id
+        self.service_code = service_code
+
 # 认证依赖
 async def get_current_user(
     request: Request,
-    token: str = Header(..., description="认证token"),
-    device_name: str = Header(..., description="设备名称"),
-    device_id: str = Header(..., description="设备ID"),
+    commons: CommonHeaders = Depends(),
     db: Session = Depends(get_db)
 ) -> Account:
     try:
         logger.debug(f"验证用户请求 - 完整信息:")
         logger.debug(f"URL: {request.url}")
         logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"Service Code: {commons.service_code}")
         
         # 验证token
-        account_id = verify_token(db, token)
+        account_id = verify_token(db, commons.token)
         if not account_id:
-            logger.error(f"无效或过期的token: {token[:10]}...")
+            logger.error(f"无效或过期的token: {commons.token[:10]}...")
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         
         logger.debug(f"Token验证成功: account_id={account_id}")
         
         # 验证设备
         token_record = db.query(UserToken).filter(
-            UserToken.token == token,
-            UserToken.device_id == device_id,
-            UserToken.device_name == device_name,
+            UserToken.token == commons.token,
+            UserToken.device_id == commons.device_id,
+            UserToken.device_name == commons.device_name,
             UserToken.expired == 0
         ).first()
         
         if not token_record:
-            logger.error(f"设备验证失败: device_name={device_name}, device_id={device_id}")
+            logger.error(f"设备验证失败: device_name={commons.device_name}, device_id={commons.device_id}")
             raise HTTPException(status_code=401, detail="Invalid device or device name")
         
         logger.debug(f"设备验证成功: {token_record.device_name} ({token_record.device_id})")
@@ -564,6 +577,7 @@ def datetime_handler(obj):
 @user_router.get("/me")
 async def read_me(
     request: Request,
+    commons: CommonHeaders = Depends(),
     current_user: Account = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -631,6 +645,7 @@ async def read_me(
 @user_router.get("/characters")
 async def read_user_characters(
     request: Request,
+    commons: CommonHeaders = Depends(),
     current_user: Account = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -659,6 +674,7 @@ async def read_user_characters(
 @user_router.get("/devices")
 async def read_user_devices(
     request: Request,
+    commons: CommonHeaders = Depends(),
     current_user: Account = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -696,14 +712,12 @@ async def read_user_devices(
 async def create_character(
     request: Request,
     data: CreateCharacterRequest,
-    token: str = Header(..., description="认证token"),
-    device_name: str = Header(..., description="设备名称"),
-    device_id: str = Header(..., description="设备ID"),
+    commons: CommonHeaders = Depends(),
     db: Session = Depends(get_db)
 ):
     try:
         # 验证用户身份
-        account = await get_current_user(request, token, device_name, device_id, db)
+        account = await get_current_user(request, commons, db)
         
         # 检查角色名是否已存在
         existing_character = db.query(Character).filter(Character.name == data.name).first()

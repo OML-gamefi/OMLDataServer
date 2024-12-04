@@ -53,6 +53,7 @@ def get_current_user(
     token: str = Header(..., description="认证token"),
     device_name: str = Header(..., description="设备名称"),
     device_id: str = Header(..., description="设备ID"),
+    service_code: str = Header(..., description="服务代码：web-网页端，game-游戏端"),
     db: Session = Depends(get_db)
 ) -> Account:
     """
