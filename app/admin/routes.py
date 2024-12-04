@@ -54,12 +54,15 @@ async def get_current_admin(
         admin = db.query(Account).filter(
             Account.id == account_id,
             Account.role == UserRole.ADMIN,
-            Account.is_deleted == False,
-            Account.status == 1
+            Account.is_deleted == False
         ).first()
         
         if not admin:
             logger.debug(f"No admin found for account_id: {account_id}")
+            return None
+            
+        if admin.status == 2:  # 已封禁
+            logger.debug(f"Admin is banned: {admin.username} (ID: {admin.id})")
             return None
             
         logger.debug(f"Admin authenticated: {admin.username} (ID: {admin.id})")
@@ -125,15 +128,6 @@ async def admin_login(
                 {
                     "request": request,
                     "error": "账号已被封禁，如有疑问请联系超级管理员"
-                }
-            )
-            
-        if admin.status == 0:  # 未激活
-            return templates.TemplateResponse(
-                "login.html",
-                {
-                    "request": request,
-                    "error": "账号未激活，请联系超级管理员"
                 }
             )
             
