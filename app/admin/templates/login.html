@@ -10,6 +10,11 @@
                 <h4 class="text-center mb-0">管理员登录</h4>
             </div>
             <div class="card-body">
+                {% if error %}
+                <div class="alert alert-danger" role="alert">
+                    {{ error }}
+                </div>
+                {% endif %}
                 <form method="post" action="/admin/login">
                     <div class="mb-3">
                         <label for="username" class="form-label">用户名</label>

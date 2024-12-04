@@ -1,105 +1,122 @@
 {% extends "base.html" %}
 
-{% block title %}{{ '编辑' if item else '新建' }}道具 - 游戏管理后台{% endblock %}
+{% block title %}{{ "编辑" if item else "新建" }}道具 - 游戏管理后台{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-md-12">
         <div class="card">
             <div class="card-header">
-                <h3 class="card-title">{{ '编辑' if item else '新建' }}道具</h3>
+                <h4>{{ "编辑" if item else "新建" }}道具</h4>
             </div>
             <div class="card-body">
-                <form method="post" id="itemForm">
-                    <div class="row">
-                        <!-- 基本信息 -->
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">道具名称</label>
-                            <input type="text" class="form-control" name="name" value="{{ item.name if item else '' }}" required>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">道具类型</label>
-                            <select class="form-select" name="type" required>
-                                {% for type in item_types %}
-                                <option value="{{ type.value }}" {% if item and item.type == type %}selected{% endif %}>
-                                    {{ type.name }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">品质</label>
-                            <select class="form-select" name="quality" required>
-                                {% for quality in item_qualities %}
-                                <option value="{{ quality.value }}" {% if item and item.quality == quality %}selected{% endif %}>
-                                    {{ quality.name }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">等级</label>
-                            <input type="number" class="form-control" name="level" value="{{ item.level if item else 1 }}" required>
-                        </div>
-                        
-                        <!-- 描述 -->
-                        <div class="col-12 mb-3">
-                            <label class="form-label">描述</label>
-                            <textarea class="form-control" name="description" rows="3">{{ item.description if item else '' }}</textarea>
-                        </div>
-                        
-                        <!-- 堆叠和绑定 -->
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">最大堆叠数量</label>
-                            <input type="number" class="form-control" name="max_stack" value="{{ item.max_stack if item else 1 }}" required>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">绑定类型</label>
-                            <select class="form-select" name="bind_type">
-                                {% for bind_type in bind_types %}
-                                <option value="{{ bind_type.value }}" {% if item and item.bind_type == bind_type %}selected{% endif %}>
-                                    {{ bind_type.name }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        
-                        <!-- 装备属性 -->
-                        <div class="col-12 equipment-attrs" style="display: none;">
-                            <h4 class="mb-3">装备属性</h4>
-                            <div class="row">
-                                <div class="col-md-4 mb-3">
-                                    <label class="form-label">物理攻击</label>
-                                    <input type="number" class="form-control" name="physical_attack" value="{{ item.physical_attack if item else 0 }}">
-                                </div>
-                                <div class="col-md-4 mb-3">
-                                    <label class="form-label">魔法攻击</label>
-                                    <input type="number" class="form-control" name="magic_attack" value="{{ item.magic_attack if item else 0 }}">
-                                </div>
-                                <div class="col-md-4 mb-3">
-                                    <label class="form-label">物理防御</label>
-                                    <input type="number" class="form-control" name="physical_defense" value="{{ item.physical_defense if item else 0 }}">
-                                </div>
-                                <div class="col-md-4 mb-3">
-                                    <label class="form-label">魔法防御</label>
-                                    <input type="number" class="form-control" name="magic_defense" value="{{ item.magic_defense if item else 0 }}">
-                                </div>
-                                <div class="col-md-4 mb-3">
-                                    <label class="form-label">生命值加成</label>
-                                    <input type="number" class="form-control" name="hp_bonus" value="{{ item.hp_bonus if item else 0 }}">
-                                </div>
-                                <div class="col-md-4 mb-3">
-                                    <label class="form-label">法力值加成</label>
-                                    <input type="number" class="form-control" name="mp_bonus" value="{{ item.mp_bonus if item else 0 }}">
-                                </div>
+                <form id="itemForm">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">道具名称</label>
+                        <input type="text" class="form-control" id="name" name="name" value="{{ item.name if item else '' }}" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="type" class="form-label">道具类型</label>
+                        <select class="form-select" id="type" name="type" required>
+                            <option value="">请选择类型</option>
+                            {% for type in item_types %}
+                            <option value="{{ type.name }}" {% if item and item.type == type %}selected{% endif %}>
+                                {{ type.value }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="quality" class="form-label">道具品质</label>
+                        <select class="form-select" id="quality" name="quality" required>
+                            <option value="">请选择品质</option>
+                            {% for quality in item_qualities %}
+                            <option value="{{ quality.name }}" {% if item and item.quality == quality %}selected{% endif %}>
+                                {{ quality.value }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="level" class="form-label">道具等级</label>
+                        <input type="number" class="form-control" id="level" name="level" value="{{ item.level if item else 1 }}" required min="1">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="description" class="form-label">道具描述</label>
+                        <textarea class="form-control" id="description" name="description" rows="3">{{ item.description if item else '' }}</textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="max_stack" class="form-label">最大堆叠数量</label>
+                        <input type="number" class="form-control" id="max_stack" name="max_stack" value="{{ item.max_stack if item else 1 }}" required min="1">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="bind_type" class="form-label">绑定类型</label>
+                        <select class="form-select" id="bind_type" name="bind_type">
+                            <option value="">请选择绑定类型</option>
+                            {% for bind_type in bind_types %}
+                            <option value="{{ bind_type.name }}" {% if item and item.bind_type == bind_type %}selected{% endif %}>
+                                {{ bind_type.value }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <!-- 装备槽位选择，只在装备类型时显示 -->
+                    <div class="mb-3 equipment-field" style="display: none;">
+                        <label for="equipment_slot" class="form-label">装备槽位</label>
+                        <select class="form-select" id="equipment_slot" name="equipment_slot">
+                            <option value="">请选择装备槽位</option>
+                            {% for slot in equipment_slots %}
+                            <option value="{{ slot.name }}" {% if item and item.equipment_slot == slot %}selected{% endif %}>
+                                {{ slot.value }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <!-- 装备属性，只在装备类型时显示 -->
+                    <div class="equipment-fields" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="physical_attack" class="form-label">物理攻击</label>
+                                <input type="number" class="form-control" id="physical_attack" name="physical_attack" value="{{ item.physical_attack if item else 0 }}" min="0">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="magic_attack" class="form-label">魔法攻击</label>
+                                <input type="number" class="form-control" id="magic_attack" name="magic_attack" value="{{ item.magic_attack if item else 0 }}" min="0">
                             </div>
                         </div>
-                        
-                        <!-- 按钮 -->
-                        <div class="col-12">
-                            <button type="submit" class="btn btn-primary">保存</button>
-                            <a href="/admin/items" class="btn btn-secondary">返回</a>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="physical_defense" class="form-label">物理防御</label>
+                                <input type="number" class="form-control" id="physical_defense" name="physical_defense" value="{{ item.physical_defense if item else 0 }}" min="0">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="magic_defense" class="form-label">魔法防御</label>
+                                <input type="number" class="form-control" id="magic_defense" name="magic_defense" value="{{ item.magic_defense if item else 0 }}" min="0">
+                            </div>
                         </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="hp_bonus" class="form-label">生命值加成</label>
+                                <input type="number" class="form-control" id="hp_bonus" name="hp_bonus" value="{{ item.hp_bonus if item else 0 }}" min="0">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="mp_bonus" class="form-label">魔法值加成</label>
+                                <input type="number" class="form-control" id="mp_bonus" name="mp_bonus" value="{{ item.mp_bonus if item else 0 }}" min="0">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="text-end">
+                        <button type="button" class="btn btn-secondary" onclick="history.back()">返回</button>
+                        <button type="submit" class="btn btn-primary">保存</button>
                     </div>
                 </form>
             </div>
@@ -111,42 +128,66 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const typeSelect = document.querySelector('select[name="type"]');
-    const equipmentAttrs = document.querySelector('.equipment-attrs');
+    const form = document.getElementById('itemForm');
+    const typeSelect = document.getElementById('type');
+    const equipmentFields = document.querySelector('.equipment-fields');
+    const equipmentField = document.querySelector('.equipment-field');
     
-    function toggleEquipmentAttrs() {
-        if (typeSelect.value === '1') { // EQUIPMENT
-            equipmentAttrs.style.display = 'block';
-        } else {
-            equipmentAttrs.style.display = 'none';
+    // 根据道具类型显示/隐藏装备属性
+    function toggleEquipmentFields() {
+        const isEquipment = typeSelect.value === 'EQUIPMENT';
+        equipmentFields.style.display = isEquipment ? 'block' : 'none';
+        equipmentField.style.display = isEquipment ? 'block' : 'none';
+        
+        // 如果不是装备类型，清空装备槽位
+        if (!isEquipment) {
+            document.getElementById('equipment_slot').value = '';
         }
     }
     
-    typeSelect.addEventListener('change', toggleEquipmentAttrs);
-    toggleEquipmentAttrs();
+    // 监听类型选择变化
+    typeSelect.addEventListener('change', toggleEquipmentFields);
     
-    document.getElementById('itemForm').addEventListener('submit', function(e) {
+    // 页面加载时初始化显示状态
+    toggleEquipmentFields();
+    
+    // 表单提交处理
+    form.addEventListener('submit', async function(e) {
         e.preventDefault();
-        const formData = new FormData(this);
-        const data = Object.fromEntries(formData.entries());
         
-        fetch('{{ "/admin/items/" + item.id if item else "/admin/items" }}', {
-            method: '{{ "PUT" if item else "POST" }}',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(data)
-        })
-        .then(response => {
-            if (response.ok) {
-                window.location.href = '/admin/items';
-            } else {
-                throw new Error('保存失败');
+        // 收集表单数据
+        const formData = new FormData(form);
+        const data = {};
+        for (let [key, value] of formData.entries()) {
+            if (value !== '') {
+                data[key] = value;
             }
-        })
-        .catch(error => {
+        }
+        
+        try {
+            const url = '{{ "/admin/items/" + (item.id|string) if item else "/admin/items" }}';
+            const method = '{{ "PUT" if item else "POST" }}';
+            
+            const response = await fetch(url, {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(result.detail || '保存失败');
+            }
+            
+            alert('保存成功');
+            window.location.href = '/admin/items';
+            
+        } catch (error) {
             alert(error.message);
-        });
+        }
     });
 });
 </script>

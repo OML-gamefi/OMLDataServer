@@ -61,42 +61,44 @@ class UserToken(SoftDeleteMixin, Base):
 
 # 种族枚举
 class Race(enum.Enum):
-    HUMAN = 1      # 人族
-    DEMON = 2      # 魔族
-    IMMORTAL = 3   # 仙族
-    BEAST = 4      # 妖族
-    GHOST = 5      # 鬼族
+    HUMAN = 1      # 人
+    MONSTER = 2    # 妖
+    GHOST = 3      # 鬼
+    IMMORTAL = 4   # 仙
 
 # 道具类型枚举
 class ItemType(enum.Enum):
-    EQUIPMENT = 1    # 装备
-    CONSUMABLE = 2   # 消耗品
-    MATERIAL = 3     # 材料
-    QUEST = 4        # 任务物品
-    CURRENCY = 5     # 货币道具
-    GIFT = 6         # 礼包
-    OTHER = 99       # 其他
+    EQUIPMENT = "装备"
+    CONSUMABLE = "消耗品"
+    MATERIAL = "材料"
+    QUEST = "任务物品"
+    OTHER = "其他"
 
 # 道具绑定状态枚举
 class BindType(enum.Enum):
-    NONE = 0         # 不绑定
-    BIND_ON_PICKUP = 1    # 拾取绑定
-    BIND_ON_EQUIP = 2     # 装备绑定
-    BIND_ON_USE = 3       # 使用绑定
-    BOUND = 4            # 已绑定
+    NONE = "不绑定"
+    PICKUP = "拾取绑定"
+    EQUIP = "装备绑定"
+    ACCOUNT = "账号绑定"
 
 # 装备位置枚举
 class EquipmentSlot(enum.Enum):
-    WEAPON = 1     # 武器
-    ARMOR = 2      # 护甲
-    HELMET = 3     # 头部
-    NECKLACE = 4   # 项链
-    RING_1 = 5     # 戒指1
-    RING_2 = 6     # 戒指2
-    BRACELET_1 = 7 # 手镯1
-    BRACELET_2 = 8 # 手镯2
-    BELT = 9       # 腰带
-    SHOES = 10     # 鞋子
+    WEAPON = "武器"
+    OFFHAND = "副手"
+    HEAD = "头部"
+    NECK = "项链"
+    SHOULDER = "肩部"
+    CHEST = "胸甲"
+    WAIST = "腰带"
+    LEGS = "腿部"
+    FEET = "靴子"
+    WRIST = "护腕"
+    HANDS = "手套"
+    FINGER1 = "戒指1"
+    FINGER2 = "戒指2"
+    TRINKET1 = "饰品1"
+    TRINKET2 = "饰品2"
+    BACK = "披风"
 
 # 装备表（记录角色当前装备）
 class CharacterEquipment(SoftDeleteMixin, Base):
@@ -436,12 +438,12 @@ class FavorRecord(SoftDeleteMixin, Base):
 
 # 道具品质枚举
 class ItemQuality(enum.Enum):
-    NORMAL = 1     # 普通
-    FINE = 2       # 精良
-    RARE = 3       # 稀有
-    EPIC = 4       # 史诗
-    LEGENDARY = 5  # 传说
-    MYTHIC = 6     # 神话
+    NORMAL = "普通"
+    MAGIC = "魔法"
+    RARE = "稀有"
+    EPIC = "史诗"
+    LEGENDARY = "传说"
+    ARTIFACT = "神器"
 
 # 道具模板表
 class ItemTemplate(SoftDeleteMixin, Base):

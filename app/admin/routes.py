@@ -1,28 +1,36 @@
-from fastapi import APIRouter, Request, Response, Depends, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Request, Response, Depends, HTTPException, Form
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.database import get_db
 from app.models import (
     Account, UserRole, ItemTemplate, ItemType, 
     ItemQuality, BindType, EquipmentSlot, UserToken, Character, Mail, MailType
 )
 from typing import Optional
-import jwt
 from datetime import datetime, timedelta
+import logging
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+import traceback
 import random
 import string
-from sqlalchemy import func
+from app.schemas.items import ItemCreate
+from app.utils.password import verify_password, hash_password
+from app.utils.auth import create_access_token, SECRET_KEY, ALGORITHM
+import jwt
+
+logger = logging.getLogger(__name__)
 
 # 创建路由
-admin_router = APIRouter(prefix="/admin")
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["管理端"],
+    responses={404: {"description": "Not found"}},
+)
 
 # 设置模板
 templates = Jinja2Templates(directory="app/admin/templates")
-
-# JWT 配置
-SECRET_KEY = "your-secret-key"  # 应该从配置文件读取
-ALGORITHM = "HS256"
 
 # 验证管理员
 async def get_current_admin(
@@ -31,15 +39,40 @@ async def get_current_admin(
 ) -> Optional[Account]:
     token = request.cookies.get("admin_token")
     if not token:
+        logger.debug("No admin_token cookie found")
         return None
     
     try:
+        # 验证JWT
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        account = db.query(Account).filter(Account.id == payload["sub"]).first()
-        if not account or account.role != UserRole.ADMIN:
+        account_id = payload.get("sub")
+        if not account_id:
+            logger.debug("No sub claim in token")
             return None
-        return account
-    except:
+            
+        # 获取管理员账号
+        admin = db.query(Account).filter(
+            Account.id == account_id,
+            Account.role == UserRole.ADMIN,
+            Account.is_deleted == False,
+            Account.status == 1
+        ).first()
+        
+        if not admin:
+            logger.debug(f"No admin found for account_id: {account_id}")
+            return None
+            
+        logger.debug(f"Admin authenticated: {admin.username} (ID: {admin.id})")
+        return admin
+        
+    except jwt.ExpiredSignatureError:
+        logger.debug("Token expired")
+        return None
+    except jwt.JWTError as e:
+        logger.debug(f"JWT validation error: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_current_admin: {str(e)}")
         return None
 
 # 登录页面
@@ -50,7 +83,7 @@ async def login_page(
     admin: Account = Depends(get_current_admin)
 ):
     if admin:
-        return RedirectResponse(url="/admin/dashboard")
+        return RedirectResponse(url="/admin/dashboard", status_code=303)
     return templates.TemplateResponse(
         "login.html",
         {"request": request}
@@ -58,42 +91,100 @@ async def login_page(
 
 # 登录处理
 @admin_router.post("/login")
-async def login(
+async def admin_login(
     request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    form = await request.form()
-    username = form.get("username")
-    password = form.get("password")
-    
-    account = db.query(Account).filter(Account.username == username).first()
-    if not account or account.password != password or account.role != UserRole.ADMIN:
+    try:
+        # 查找管理员账号
+        admin = db.query(Account).filter(Account.username == username).first()
+        if not admin:
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "用户名或密码错误"
+                }
+            )
+            
+        # 检查账号状态
+        if admin.is_deleted:
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "账号已被删除"
+                }
+            )
+            
+        if admin.status == 2:  # 已封禁
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "账号已被封禁，如有疑问请联系超级管理员"
+                }
+            )
+            
+        if admin.status == 0:  # 未激活
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "账号未激活，请联系超级管理员"
+                }
+            )
+            
+        # 验证密码
+        if not verify_password(password, admin.password):
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "用户名或密码错误"
+                }
+            )
+            
+        # 验证是否是管理员
+        if admin.role != UserRole.ADMIN:
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "该账号没有管理员权限"
+                }
+            )
+            
+        # 生成访问令牌
+        access_token = create_access_token(data={"sub": str(admin.id)})
+        logger.debug(f"Created access token for admin: {admin.username} (ID: {admin.id})")
+        
+        # 更新最后登录时间
+        admin.last_login_at = datetime.now()
+        db.commit()
+        
+        # 创建响应
+        response = RedirectResponse(url="/admin/dashboard", status_code=303)
+        response.set_cookie(
+            key="admin_token",
+            value=access_token,
+            httponly=True,
+            max_age=3600 * 24 * 30,  # 30天
+            path="/"  # 添加path参数
+        )
+        return response
+        
+    except Exception as e:
+        logger.error(f"管理员登录失败: {str(e)}")
         return templates.TemplateResponse(
             "login.html",
             {
                 "request": request,
-                "messages": [{"type": "danger", "text": "用户名或密码错误"}]
+                "error": "系统错误，请稍后重试"
             }
         )
-    
-    # 创建 JWT token
-    token = jwt.encode(
-        {
-            "sub": str(account.id),
-            "exp": datetime.utcnow() + timedelta(days=1)
-        },
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
-    
-    response = RedirectResponse(url="/admin/dashboard", status_code=303)
-    response.set_cookie(
-        key="admin_token",
-        value=token,
-        httponly=True,
-        max_age=86400  # 1天
-    )
-    return response
 
 # 仪表盘
 @admin_router.get("/dashboard", response_class=HTMLResponse)
@@ -102,7 +193,9 @@ async def dashboard(
     admin: Account = Depends(get_current_admin)
 ):
     if not admin:
-        return RedirectResponse(url="/admin/login")
+        logger.debug("No admin authenticated, redirecting to login")
+        return RedirectResponse(url="/admin/login", status_code=303)
+    logger.debug(f"Rendering dashboard for admin: {admin.username} (ID: {admin.id})")
     return templates.TemplateResponse(
         "dashboard.html",
         {"request": request, "user": admin}
@@ -111,8 +204,11 @@ async def dashboard(
 # 登出
 @admin_router.get("/logout")
 async def logout():
-    response = RedirectResponse(url="/admin/login")
-    response.delete_cookie("admin_token")
+    response = RedirectResponse(url="/admin/login", status_code=303)
+    response.delete_cookie(
+        key="admin_token",
+        path="/"  # 添加path参数
+    )
     return response
 
 # 道具列表页面
@@ -148,94 +244,171 @@ async def items_list(
     )
 
 # 新建道具页面
-@admin_router.get("/items/create", response_class=HTMLResponse)
-async def create_item_page(
+@admin_router.get("/items/new", response_class=HTMLResponse)
+async def new_item(
     request: Request,
     admin: Account = Depends(get_current_admin)
 ):
     if not admin:
         return RedirectResponse(url="/admin/login")
-    
-    return templates.TemplateResponse(
-        "items/edit.html",
-        {
-            "request": request,
-            "user": admin,
-            "item": None,
-            "item_types": list(ItemType),
-            "item_qualities": list(ItemQuality),
-            "bind_types": list(BindType),
-            "equipment_slots": list(EquipmentSlot)
-        }
-    )
+        
+    return templates.TemplateResponse("items/edit.html", {
+        "request": request,
+        "item": None,
+        "item_types": list(ItemType),
+        "item_qualities": list(ItemQuality),
+        "bind_types": list(BindType),
+        "equipment_slots": list(EquipmentSlot)
+    })
 
 # 编辑道具页面
 @admin_router.get("/items/{item_id}/edit", response_class=HTMLResponse)
-async def edit_item_page(
+async def edit_item(
     request: Request,
     item_id: int,
-    admin: Account = Depends(get_current_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    admin: Account = Depends(get_current_admin)
 ):
     if not admin:
         return RedirectResponse(url="/admin/login")
-    
+        
     item = db.query(ItemTemplate).filter(ItemTemplate.id == item_id).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    
-    return templates.TemplateResponse(
-        "items/edit.html",
-        {
-            "request": request,
-            "user": admin,
-            "item": item,
-            "item_types": list(ItemType),
-            "item_qualities": list(ItemQuality),
-            "bind_types": list(BindType),
-            "equipment_slots": list(EquipmentSlot)
-        }
-    )
+        raise HTTPException(status_code=404, detail="道具不存在")
+        
+    return templates.TemplateResponse("items/edit.html", {
+        "request": request,
+        "item": item,
+        "item_types": list(ItemType),
+        "item_qualities": list(ItemQuality),
+        "bind_types": list(BindType),
+        "equipment_slots": list(EquipmentSlot)
+    })
 
 # 创建道具API
 @admin_router.post("/items")
 async def create_item(
-    request: Request,
-    admin: Account = Depends(get_current_admin),
-    db: Session = Depends(get_db)
+    item: ItemCreate,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(get_current_admin)
 ):
     if not admin:
-        raise HTTPException(status_code=401)
-    
-    data = await request.json()
-    item = ItemTemplate(**data)
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-    
-    return {"id": item.id}
+        raise HTTPException(status_code=401, detail="未授权的访问")
+        
+    try:
+        # 将字符串枚举名称转换为枚举值
+        item_dict = item.dict()
+        
+        # 转换道具类型
+        if item_dict.get('type'):
+            item_dict['type'] = ItemType[item_dict['type']]
+            
+        # 转换品质
+        if item_dict.get('quality'):
+            item_dict['quality'] = ItemQuality[item_dict['quality']]
+            
+        # 转换绑定类型
+        if item_dict.get('bind_type'):
+            item_dict['bind_type'] = BindType[item_dict['bind_type']]
+            
+        # 转换装备槽位
+        if item_dict.get('equipment_slot'):
+            item_dict['equipment_slot'] = EquipmentSlot[item_dict['equipment_slot']]
+        
+        # 创建道具模板
+        db_item = ItemTemplate(**item_dict)
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
+        
+        return {"status": "success", "message": "道具创建成功", "data": db_item}
+        
+    except KeyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的枚举值: {str(e)}"
+        )
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"数据库错误: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="数据库错误"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"创建道具时发生错误: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"创建道具失败: {str(e)}"
+        )
 
 # 更新道具API
 @admin_router.put("/items/{item_id}")
 async def update_item(
     item_id: int,
-    request: Request,
-    admin: Account = Depends(get_current_admin),
-    db: Session = Depends(get_db)
+    item: ItemCreate,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(get_current_admin)
 ):
     if not admin:
-        raise HTTPException(status_code=401)
-    
-    item = db.query(ItemTemplate).filter(ItemTemplate.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    
-    data = await request.json()
-    for key, value in data.items():
-        setattr(item, key, value)
-    
-    db.commit()
-    return {"status": "success"}
+        raise HTTPException(status_code=401, detail="未授权的访问")
+        
+    try:
+        # 查找要更新的道具
+        db_item = db.query(ItemTemplate).filter(ItemTemplate.id == item_id).first()
+        if not db_item:
+            raise HTTPException(status_code=404, detail="道具不存在")
+            
+        # 将字符串枚举名称转换为枚举值
+        item_dict = item.dict(exclude_unset=True)
+        
+        # 转换道具类型
+        if item_dict.get('type'):
+            item_dict['type'] = ItemType[item_dict['type']]
+            
+        # 转换品质
+        if item_dict.get('quality'):
+            item_dict['quality'] = ItemQuality[item_dict['quality']]
+            
+        # 转换绑定类型
+        if item_dict.get('bind_type'):
+            item_dict['bind_type'] = BindType[item_dict['bind_type']]
+            
+        # 转换装备槽位
+        if item_dict.get('equipment_slot'):
+            item_dict['equipment_slot'] = EquipmentSlot[item_dict['equipment_slot']]
+            
+        # 更新道具属性
+        for key, value in item_dict.items():
+            setattr(db_item, key, value)
+            
+        db.commit()
+        db.refresh(db_item)
+        
+        return {"status": "success", "message": "道具更新成功", "data": db_item}
+        
+    except KeyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的枚举值: {str(e)}"
+        )
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"数据库错误: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="数据库错误"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"更新道具时发生错误: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"更新道具失败: {str(e)}"
+        )
 
 # 删除道具API
 @admin_router.delete("/items/{item_id}")
@@ -325,7 +498,7 @@ async def reset_user_password(
     
     # 生成新密码
     new_password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-    user.password = new_password  # 实际应用中应该加密
+    user.password = hash_password(new_password)
     db.commit()
     
     return {"status": "success", "password": new_password}
@@ -384,7 +557,7 @@ async def send_mail(
         mail = Mail(
             receiver_id=recipient.id,
             sender_id=admin.id,
-            sender_name="系统管理员",
+            sender_name="统管理员",
             title=data['title'],
             content=data['content'],
             mail_type=MailType.SYSTEM,
@@ -405,7 +578,7 @@ async def stats_dashboard(
     db: Session = Depends(get_db)
 ):
     if not admin:
-        return RedirectResponse(url="/admin/login")
+        return RedirectResponse(url="/admin/login", status_code=303)
     
     # 计算基础统计数据
     total_users = db.query(Account).count()
@@ -414,7 +587,7 @@ async def stats_dashboard(
     ).count()
     
     online_users = db.query(UserToken).filter(
-        UserToken.expired == 0,
+        UserToken.expired == False,
         UserToken.last_active >= datetime.utcnow() - timedelta(minutes=5)
     ).count()
     

@@ -3,10 +3,15 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.declarative import DeclarativeMeta
+from app.database import Base
+from app.utils.password import hash_password
+import logging
 
 ModelType = TypeVar("ModelType", bound=DeclarativeMeta)
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
 UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
+
+logger = logging.getLogger(__name__)
 
 class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     def __init__(self, model: Type[ModelType]):
@@ -19,29 +24,57 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         return db.query(self.model).offset(skip).limit(limit).all()
 
     def create(self, db: Session, *, data: Dict[str, Any]) -> ModelType:
-        db_obj = self.model(**data)
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
-        return db_obj
+        try:
+            # 如果是Account模型且包含password字段，进行密码加密
+            if self.model.__name__ == 'Account' and 'password' in data:
+                data['password'] = hash_password(data['password'])
+                logger.debug(f"已对用户密码进行加密: username={data.get('username')}")
 
-    def update(self, db: Session, *, id: Any, data: Dict[str, Any]) -> Optional[ModelType]:
-        db_obj = self.get(db, id)
-        if db_obj:
-            for field, value in data.items():
-                if hasattr(db_obj, field):
-                    setattr(db_obj, field, value)
+            db_obj = self.model(**data)
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
-        return db_obj
+            return db_obj
+        except Exception as e:
+            logger.error(f"创建{self.model.__name__}失败: {str(e)}")
+            db.rollback()
+            raise
+
+    def update(self, db: Session, *, id: Any, data: Dict[str, Any]) -> Optional[ModelType]:
+        try:
+            db_obj = db.query(self.model).filter(self.model.id == id).first()
+            if not db_obj:
+                return None
+
+            # 如果是Account模型且要更新password字段，进行密码加密
+            if self.model.__name__ == 'Account' and 'password' in data:
+                data['password'] = hash_password(data['password'])
+                logger.debug(f"已对用户新密码进行加密: id={id}")
+
+            for key, value in data.items():
+                setattr(db_obj, key, value)
+            
+            db.commit()
+            db.refresh(db_obj)
+            return db_obj
+        except Exception as e:
+            logger.error(f"更新{self.model.__name__}失败: {str(e)}")
+            db.rollback()
+            raise
 
     def remove(self, db: Session, *, id: int) -> Optional[ModelType]:
-        obj = self.get(db, id)
-        if obj:
-            db.delete(obj)
+        try:
+            db_obj = db.query(self.model).filter(self.model.id == id).first()
+            if not db_obj:
+                return None
+            
+            db.delete(db_obj)
             db.commit()
-        return obj
+            return db_obj
+        except Exception as e:
+            logger.error(f"删除{self.model.__name__}失败: {str(e)}")
+            db.rollback()
+            raise
 
 class CRUDRegister:
     _instances: Dict[str, CRUDBase] = {}
