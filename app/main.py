@@ -437,9 +437,9 @@ async def login(
                 detail="账号已被封禁，如有疑问请联系我们"
             )
             
-        if account.status == 0:  # 未激活
-            logger.error(f"未激活的账号尝试登录: {login_data.username}")
-            raise HTTPException(status_code=403, detail="账号未激活，请先激活账号")
+        # if account.status == 0:  # 未激活
+        #     logger.error(f"未激活的账号尝试登录: {login_data.username}")
+        #     raise HTTPException(status_code=403, detail="账号未激活，请先激活账号")
             
         # 验证密码
         if not verify_password(login_data.password, account.password):

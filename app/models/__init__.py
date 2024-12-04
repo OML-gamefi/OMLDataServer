@@ -28,7 +28,7 @@ class Account(SoftDeleteMixin, Base):
     
     # 新增字段
     wallet_address = Column(String(100), unique=True, nullable=True)  # 钱包地址
-    status = Column(Integer, default=0, nullable=False)  # 0: 未激活, 1: 正常, 2: 已封禁
+    status = Column(Integer, default=1, nullable=False)  # 0: 未激活, 1: 正常, 2: 已封禁
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)  # 创建时间
     email = Column(String(100), unique=True, nullable=True)  # 邮箱地址
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)  # 用户角色
