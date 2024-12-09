@@ -151,8 +151,11 @@ async def admin_login(
                 }
             )
             
-        # 生成访问令牌
-        access_token = create_access_token(data={"sub": str(admin.id)})
+        # 生成访问令牌，有效期2小时
+        access_token = create_access_token(
+            data={"sub": str(admin.id)},
+            expires_delta=timedelta(hours=2)
+        )
         logger.debug(f"Created access token for admin: {admin.username} (ID: {admin.id})")
         
         # 更新最后登录时间
@@ -165,8 +168,10 @@ async def admin_login(
             key="admin_token",
             value=access_token,
             httponly=True,
-            max_age=3600 * 24 * 30,  # 30天
-            path="/"  # 添加path参数
+            secure=True,  # 只在 HTTPS 连接中发送
+            samesite="lax",  # 防止 CSRF 攻击
+            max_age=7200,  # 2小时后过期
+            path="/"
         )
         return response
         

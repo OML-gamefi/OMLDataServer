@@ -451,7 +451,7 @@ async def login(
         # 检查是否有游戏角色
         has_character = db.query(Character).filter(
             Character.account_id == account.id,
-            Character.is_deleted == False
+            Character.is_deleted == 0
         ).first() is not None
         logger.debug(f"用户角色检查: has_character={has_character}")
         
@@ -586,6 +586,12 @@ async def read_me(
         logger.debug(f"URL: {request.url}")
         logger.debug(f"Headers: {dict(request.headers)}")
         
+        # 获取当前未删除的角色
+        current_character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
+        
         response_data = {
             "id": current_user.id,
             "username": current_user.username,
@@ -597,42 +603,39 @@ async def read_me(
             "created_at": current_user.created_at,
             "oml_coin": current_user.oml_coin,
             "user_setting": current_user.user_setting,
-            "characters": [
-                {
-                    "id": char.id,
-                    "name": char.name,
-                    "race": char.race.value,
-                    "current_location": char.current_location,
-                    "level": char.level,
-                    "exp": char.exp,
-                    "max_exp": char.max_exp,
-                    # 基础属性
-                    "max_hp": char.max_hp,
-                    "current_hp": char.current_hp,
-                    "max_mp": char.max_mp,
-                    "current_mp": char.current_mp,
-                    # 战斗属性
-                    "physical_attack": char.physical_attack,
-                    "magic_attack": char.magic_attack,
-                    "physical_defense": char.physical_defense,
-                    "magic_defense": char.magic_defense,
-                    # 其他属性
-                    "speed": char.speed,
-                    "critical_rate": char.critical_rate,
-                    "critical_damage": char.critical_damage,
-                    "hit_rate": char.hit_rate,
-                    "dodge_rate": char.dodge_rate,
-                    "morality": char.morality,
-                    "max_stamina": char.max_stamina,
-                    "current_stamina": char.current_stamina,
-                    "copper_coins": char.copper_coins,
-                    # 时间信息
-                    "created_at": char.created_at,
-                    "last_login": char.last_login,
-                    "last_logout": char.last_logout
-                }
-                for char in current_user.characters
-            ]
+            "character": None if not current_character else {
+                "id": current_character.id,
+                "name": current_character.name,
+                "race": current_character.race.value,
+                "current_location": current_character.current_location,
+                "level": current_character.level,
+                "exp": current_character.exp,
+                "max_exp": current_character.max_exp,
+                # 基础属性
+                "max_hp": current_character.max_hp,
+                "current_hp": current_character.current_hp,
+                "max_mp": current_character.max_mp,
+                "current_mp": current_character.current_mp,
+                # 战斗属性
+                "physical_attack": current_character.physical_attack,
+                "magic_attack": current_character.magic_attack,
+                "physical_defense": current_character.physical_defense,
+                "magic_defense": current_character.magic_defense,
+                # 其他属性
+                "speed": current_character.speed,
+                "critical_rate": current_character.critical_rate,
+                "critical_damage": current_character.critical_damage,
+                "hit_rate": current_character.hit_rate,
+                "dodge_rate": current_character.dodge_rate,
+                "morality": current_character.morality,
+                "max_stamina": current_character.max_stamina,
+                "current_stamina": current_character.current_stamina,
+                "copper_coins": current_character.copper_coins,
+                # 时间信息
+                "created_at": current_character.created_at,
+                "last_login": current_character.last_login,
+                "last_logout": current_character.last_logout
+            }
         }
         logger.debug(f"获取用户信息成功: {json.dumps(response_data, ensure_ascii=False, default=datetime_handler)}")
         return response_data
@@ -641,7 +644,6 @@ async def read_me(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise
 
-# 修改为GET方法，使用header参数
 @user_router.get("/characters")
 async def read_user_characters(
     request: Request,
@@ -654,17 +656,23 @@ async def read_user_characters(
         logger.debug(f"URL: {request.url}")
         logger.debug(f"Headers: {dict(request.headers)}")
         
-        characters = current_user.characters
-        logger.debug(f"获取到 {len(characters)} 个角色")
+        # 只获取当前未删除的角色
+        character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
         
-        char_list = [{
-            'id': char.id,
-            'name': char.name,
-            'level': char.level
-        } for char in characters]
+        if character:
+            char_list = [{
+                'id': character.id,
+                'name': character.name,
+                'level': character.level
+            }]
+        else:
+            char_list = []
+            
         logger.debug(f"角色列表: {json.dumps(char_list, ensure_ascii=False)}")
-        
-        return characters
+        return char_list
     except Exception as e:
         logger.error(f"获取用户角色列表失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
@@ -719,10 +727,25 @@ async def create_character(
         # 验证用户身份
         account = await get_current_user(request, commons, db)
         
-        # 检查角色名是否已存在
-        existing_character = db.query(Character).filter(Character.name == data.name).first()
+        # 检查是否已有未删除的角色
+        existing_character = db.query(Character).filter(
+            Character.account_id == account.id,
+            Character.is_deleted == 0
+        ).first()
+        
         if existing_character:
-            raise HTTPException(status_code=400, detail="Character name already exists")
+            raise HTTPException(
+                status_code=400,
+                detail="您已经有一个角色了，不能创建更多角色"
+            )
+        
+        # 检查角色名是否已存在
+        name_exists = db.query(Character).filter(
+            Character.name == data.name,
+            Character.is_deleted == 0
+        ).first()
+        if name_exists:
+            raise HTTPException(status_code=400, detail="角色名已存在")
         
         # 获取种族初始属性
         initial_stats = RACE_INITIAL_STATS[data.race]
@@ -748,7 +771,8 @@ async def create_character(
             max_exp=100,
             copper_coins=0,
             created_at=datetime.utcnow(),
-            last_login=datetime.utcnow()
+            last_login=datetime.utcnow(),
+            is_deleted=0  # 确保设置为未删除
         )
         
         db.add(character)
@@ -779,7 +803,7 @@ async def create_character(
         db.commit()
         
         return {
-            "message": "Character created successfully",
+            "message": "角色创建成功",
             "character_id": character.id,
             "name": character.name,
             "race": character.race.value,
@@ -792,7 +816,7 @@ async def create_character(
         logger.error(f"创建角色失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         db.rollback()
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
 
 # 注册路由
 app.include_router(crud_router)
