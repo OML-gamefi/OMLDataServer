@@ -26,7 +26,7 @@ class Account(SoftDeleteMixin, Base):
     username = Column(String(50), unique=True, index=True, nullable=False) #用户名
     password = Column(String(100), nullable=False) #密码
     
-    # 新增字段
+    # 增字段
     wallet_address = Column(String(100), unique=True, nullable=True)  # 钱包地址
     status = Column(Integer, default=1, nullable=False)  # 0: 未激活, 1: 正常, 2: 已封禁
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)  # 创建时间
@@ -180,7 +180,7 @@ class Character(SoftDeleteMixin, Base):
 
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
-    sect_id = Column(Integer, nullable=True)  # 所属宗门ID
+    sect_name = Column(String(50), nullable=True)  # 所属宗门名称，可以为空
     race = Column(Enum(Race), nullable=False)  # 种族
     
     # 基础信息
@@ -203,7 +203,7 @@ class Character(SoftDeleteMixin, Base):
     morality = Column(Integer, default=0, nullable=False)  # 善恶值
     max_stamina = Column(Integer, default=100, nullable=False)  # 体力上限
     current_stamina = Column(Integer, default=100, nullable=False)  # 当前体力
-    copper_coins = Column(Integer, default=0, nullable=False)  # 铜钱（游戏币）
+    copper_coins = Column(Integer, default=0, nullable=False)  # 铜钱（游戏）
     
     # 时间相关
     created_at = Column(DateTime, default=datetime.datetime.utcnow)  # 创建时间
@@ -262,7 +262,7 @@ class Inventory(SoftDeleteMixin, Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)  # 获得时间
     
     # 其他属性
-    attributes = Column(JSON, nullable=True)               # 额外属性（如：强化等级、宝石槽等）
+    attributes = Column(JSON, nullable=True)               # 额外属性（如强化等级、宝石槽等）
     durability = Column(Integer, nullable=True)            # 耐久度（装备特有）
     
     # 关系
@@ -473,7 +473,7 @@ class ItemTemplate(SoftDeleteMixin, Base):
     mp_bonus = Column(Integer, default=0, nullable=True)  # 法力值加成
     
     # 使用相关
-    usable = Column(Integer, default=0)  # 是否可使用
+    usable = Column(Integer, default=0)  # 是否可用
     use_script = Column(String(255), nullable=True)  # 使用脚本
     cooldown = Column(Integer, default=0)  # 使用冷却时间（秒）
     

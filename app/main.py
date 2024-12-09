@@ -607,6 +607,7 @@ async def read_me(
                 "id": current_character.id,
                 "name": current_character.name,
                 "race": current_character.race.value,
+                "sect_name": current_character.sect_name,
                 "current_location": current_character.current_location,
                 "level": current_character.level,
                 "exp": current_character.exp,
@@ -736,7 +737,7 @@ async def create_character(
         if existing_character:
             raise HTTPException(
                 status_code=400,
-                detail="您已经有一个角色了，不能创建更多角色"
+                detail="已有角色"
             )
         
         # 检查角色名是否已存在
