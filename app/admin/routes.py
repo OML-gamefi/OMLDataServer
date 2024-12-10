@@ -158,7 +158,7 @@ async def admin_login(
         )
         logger.debug(f"Created access token for admin: {admin.username} (ID: {admin.id})")
         
-        # 更新最后登录时间
+        # 更新最后登录时��
         admin.last_login_at = datetime.now()
         db.commit()
         
@@ -168,7 +168,7 @@ async def admin_login(
             key="admin_token",
             value=access_token,
             httponly=True,
-            secure=True,  # 只在 HTTPS 连接中发送
+            secure=False,  # 允许在 HTTP 中使用
             samesite="lax",  # 防止 CSRF 攻击
             max_age=7200,  # 2小时后过期
             path="/"
