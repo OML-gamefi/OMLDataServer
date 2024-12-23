@@ -4,15 +4,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional
-from app.database import SessionLocal, engine, Base
-from app.models import (
-    Account, UserToken, Character, CharacterEquipment, 
-    Race, FavorRecord, FavorTargetType
-)
-from app.crud.base import CRUDRegister
-from app.auth.token import create_token, verify_token, invalidate_token
-from app.config import settings
-from pydantic import BaseModel
 import logging
 import json
 import traceback
@@ -21,11 +12,16 @@ import importlib
 import inspect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from app.admin.routes import admin_router
 from enum import Enum
 import app.models as models_module
 from app.utils.password import verify_password
 import sqlalchemy.exc
+from app.admin.routes import admin_router
+from app.utils.ai_service import ai_service, ChatRequest, ChatResponse
+
+from app.crud.base import CRUDRegister
+from app.auth.token import create_token, verify_token, invalidate_token
+from pydantic import BaseModel
 
 # 修改日志配置
 logging.basicConfig(
@@ -34,6 +30,21 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+# 导入配置
+logger.info("Loading settings...")
+from app.config import settings
+logger.info(f"Settings loaded - DB_HOST: {settings.DB_HOST}")
+
+# 导入数据库
+logger.info("Initializing database...")
+from app.database import SessionLocal, engine, Base
+logger.info("Database initialized")
+
+from app.models import (
+    Account, UserToken, Character, CharacterEquipment, 
+    Race, FavorRecord, FavorTargetType
+)
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -54,7 +65,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         logger.debug(f"请求URL: {request.url}")
         logger.debug(f"请求头: {dict(request.headers)}")
         
-        # 获取请求体
+        # ��取请求体
         body = await request.body()
         if body:
             try:
@@ -524,7 +535,7 @@ async def get_current_user(
     db: Session = Depends(get_db)
 ) -> Account:
     try:
-        logger.debug(f"验证用户请求 - 完整信息:")
+        logger.debug(f"验证用户请求 - ��整信息:")
         logger.debug(f"URL: {request.url}")
         logger.debug(f"Headers: {dict(request.headers)}")
         logger.debug(f"Service Code: {commons.service_code}")
@@ -818,6 +829,18 @@ async def create_character(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         db.rollback()
         raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+
+# 添加AI路由
+@app.post("/api/chat", response_model=ChatResponse, tags=["AI对话"])
+async def chat(request: ChatRequest):
+    """
+    AI对话接口
+    
+    - **messages**: 对话消息列表，包含role和content
+    - **temperature**: 温度参数，控制响应的随机性（可选，默认0.7）
+    - **max_tokens**: 最大token数（可选）
+    """
+    return await ai_service.chat_completion(request)
 
 # 注册路由
 app.include_router(crud_router)

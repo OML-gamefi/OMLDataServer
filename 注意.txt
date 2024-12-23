@@ -1,0 +1,7 @@
+数据库有访问账号test，未限制访问域名，之后需要删除
+
+# 删除用户
+DROP USER 'test'@'%';
+
+# 刷新权限
+FLUSH PRIVILEGES;

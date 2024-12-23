@@ -1,5 +1,9 @@
 from typing import List
 from pydantic_settings import BaseSettings
+import logging
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     # 数据库配置
@@ -14,11 +18,22 @@ class Settings(BaseSettings):
     API_PORT: int
     
     # CORS配置
-    CORS_ORIGINS: str  # 直接使用与.env文件相同的变量名
-
+    CORS_ORIGINS: str
+    
     # JWT配置
-    JWT_SECRET_KEY: str = "your-secret-key"  # 应该使用环境变量
+    JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7天
+    
+    # AI配置
+    AI_API_KEY: str
+    AI_BASE_URL: str
+    AI_MODEL: str
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = 'utf-8'
+        case_sensitive = True
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -32,11 +47,6 @@ class Settings(BaseSettings):
                 "*"
             ]
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
-    
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "case_sensitive": False
-    }
 
-settings = Settings() 
+# 创建设置实例
+settings = Settings()
