@@ -4,10 +4,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
-from app.models import (
-    Account, UserRole, ItemTemplate, ItemType, 
-    ItemQuality, BindType, EquipmentSlot, UserToken, Character, Mail, MailType
-)
+from app.models import *  # 使用__all__导入所有模型
 from typing import Optional
 from datetime import datetime, timedelta
 import logging
@@ -15,7 +12,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import traceback
 import random
 import string
-from app.schemas.items import ItemCreate
 from app.utils.password import verify_password, hash_password
 from app.utils.auth import create_access_token, SECRET_KEY, ALGORITHM
 import jwt
@@ -158,7 +154,7 @@ async def admin_login(
         )
         logger.debug(f"Created access token for admin: {admin.username} (ID: {admin.id})")
         
-        # 更新最后登录时��
+        # 更新最后登录时间
         admin.last_login_at = datetime.now()
         db.commit()
         
@@ -209,223 +205,6 @@ async def logout():
         path="/"  # 添加path参数
     )
     return response
-
-# 道具列表页面
-@admin_router.get("/items", response_class=HTMLResponse)
-async def items_list(
-    request: Request,
-    name: str = None,
-    type: str = None,
-    admin: Account = Depends(get_current_admin),
-    db: Session = Depends(get_db)
-):
-    if not admin:
-        return RedirectResponse(url="/admin/login")
-    
-    # 构建查询
-    query = db.query(ItemTemplate)
-    if name:
-        query = query.filter(ItemTemplate.name.like(f"%{name}%"))
-    if type:
-        query = query.filter(ItemTemplate.type == type)
-    
-    items = query.all()
-    
-    return templates.TemplateResponse(
-        "items/list.html",
-        {
-            "request": request,
-            "user": admin,
-            "items": items,
-            "item_types": list(ItemType),
-            "item_qualities": list(ItemQuality)
-        }
-    )
-
-# 新建道具页面
-@admin_router.get("/items/new", response_class=HTMLResponse)
-async def new_item(
-    request: Request,
-    admin: Account = Depends(get_current_admin)
-):
-    if not admin:
-        return RedirectResponse(url="/admin/login")
-        
-    return templates.TemplateResponse("items/edit.html", {
-        "request": request,
-        "item": None,
-        "item_types": list(ItemType),
-        "item_qualities": list(ItemQuality),
-        "bind_types": list(BindType),
-        "equipment_slots": list(EquipmentSlot)
-    })
-
-# 编辑道具页面
-@admin_router.get("/items/{item_id}/edit", response_class=HTMLResponse)
-async def edit_item(
-    request: Request,
-    item_id: int,
-    db: Session = Depends(get_db),
-    admin: Account = Depends(get_current_admin)
-):
-    if not admin:
-        return RedirectResponse(url="/admin/login")
-        
-    item = db.query(ItemTemplate).filter(ItemTemplate.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="道具不存在")
-        
-    return templates.TemplateResponse("items/edit.html", {
-        "request": request,
-        "item": item,
-        "item_types": list(ItemType),
-        "item_qualities": list(ItemQuality),
-        "bind_types": list(BindType),
-        "equipment_slots": list(EquipmentSlot)
-    })
-
-# 创建道具API
-@admin_router.post("/items")
-async def create_item(
-    item: ItemCreate,
-    db: Session = Depends(get_db),
-    admin: Account = Depends(get_current_admin)
-):
-    if not admin:
-        raise HTTPException(status_code=401, detail="未授权的访问")
-        
-    try:
-        # 将字符串枚举名称转换为枚举值
-        item_dict = item.dict()
-        
-        # 转换道具类型
-        if item_dict.get('type'):
-            item_dict['type'] = ItemType[item_dict['type']]
-            
-        # 转换品质
-        if item_dict.get('quality'):
-            item_dict['quality'] = ItemQuality[item_dict['quality']]
-            
-        # 转换绑定类型
-        if item_dict.get('bind_type'):
-            item_dict['bind_type'] = BindType[item_dict['bind_type']]
-            
-        # 转换装备槽位
-        if item_dict.get('equipment_slot'):
-            item_dict['equipment_slot'] = EquipmentSlot[item_dict['equipment_slot']]
-        
-        # 创建道具模板
-        db_item = ItemTemplate(**item_dict)
-        db.add(db_item)
-        db.commit()
-        db.refresh(db_item)
-        
-        return {"status": "success", "message": "道具创建成功", "data": db_item}
-        
-    except KeyError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"无效的枚举值: {str(e)}"
-        )
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"数据库错误: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="数据库错误"
-        )
-    except Exception as e:
-        db.rollback()
-        logger.error(f"创建道具时发生错误: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"创建道具失败: {str(e)}"
-        )
-
-# 更新道具API
-@admin_router.put("/items/{item_id}")
-async def update_item(
-    item_id: int,
-    item: ItemCreate,
-    db: Session = Depends(get_db),
-    admin: Account = Depends(get_current_admin)
-):
-    if not admin:
-        raise HTTPException(status_code=401, detail="未授权的访问")
-        
-    try:
-        # 查找要更新的道具
-        db_item = db.query(ItemTemplate).filter(ItemTemplate.id == item_id).first()
-        if not db_item:
-            raise HTTPException(status_code=404, detail="道具不存在")
-            
-        # 将字符串枚举名称转换为枚举值
-        item_dict = item.dict(exclude_unset=True)
-        
-        # 转换道具类型
-        if item_dict.get('type'):
-            item_dict['type'] = ItemType[item_dict['type']]
-            
-        # 转换品质
-        if item_dict.get('quality'):
-            item_dict['quality'] = ItemQuality[item_dict['quality']]
-            
-        # 转换绑定类型
-        if item_dict.get('bind_type'):
-            item_dict['bind_type'] = BindType[item_dict['bind_type']]
-            
-        # 转换装备槽位
-        if item_dict.get('equipment_slot'):
-            item_dict['equipment_slot'] = EquipmentSlot[item_dict['equipment_slot']]
-            
-        # 更新道具属性
-        for key, value in item_dict.items():
-            setattr(db_item, key, value)
-            
-        db.commit()
-        db.refresh(db_item)
-        
-        return {"status": "success", "message": "道具更新成功", "data": db_item}
-        
-    except KeyError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"无效的枚举值: {str(e)}"
-        )
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"数据库错误: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="数据库错误"
-        )
-    except Exception as e:
-        db.rollback()
-        logger.error(f"更新道具时发生错误: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"更新道具失败: {str(e)}"
-        )
-
-# 删除道具API
-@admin_router.delete("/items/{item_id}")
-async def delete_item(
-    item_id: int,
-    admin: Account = Depends(get_current_admin),
-    db: Session = Depends(get_db)
-):
-    if not admin:
-        raise HTTPException(status_code=401)
-    
-    item = db.query(ItemTemplate).filter(ItemTemplate.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    
-    db.delete(item)
-    db.commit()
-    return {"status": "success"}
 
 # 用户管理相关路由
 @admin_router.get("/users", response_class=HTMLResponse)
@@ -512,16 +291,11 @@ async def mail_page(
     if not admin:
         return RedirectResponse(url="/admin/login")
     
-    # 获取道具列表供选择
-    items = db.query(ItemTemplate).all()
-    
     return templates.TemplateResponse(
         "mails/send.html",
         {
             "request": request,
-            "user": admin,
-            "items": items,
-            "bind_types": list(BindType)
+            "user": admin
         }
     )
 
@@ -539,24 +313,29 @@ async def send_mail(
     
     # 获取收件人列表
     if data['send_type'] == 'all':
-        recipients = db.query(Account).filter(Account.status == 1).all()
-    elif data['send_type'] == 'level':
-        recipients = db.query(Account).join(Character).filter(
+        recipients = db.query(Character).join(Account).filter(
             Account.status == 1,
+            Character.is_deleted == 0
+        ).all()
+    elif data['send_type'] == 'level':
+        recipients = db.query(Character).join(Account).filter(
+            Account.status == 1,
+            Character.is_deleted == 0,
             Character.level.between(data['min_level'], data['max_level'])
         ).all()
     else:  # specific
-        recipients = db.query(Account).filter(
+        recipients = db.query(Character).join(Account).filter(
             Account.status == 1,
-            Account.id.in_(data['user_ids'])
+            Character.is_deleted == 0,
+            Character.id.in_(data['character_ids'])
         ).all()
     
     # 创建邮件
     for recipient in recipients:
         mail = Mail(
-            receiver_id=recipient.id,
+            character_id=recipient.id,
             sender_id=admin.id,
-            sender_name="统管理员",
+            sender_name="系统管理员",
             title=data['title'],
             content=data['content'],
             mail_type=MailType.SYSTEM,
@@ -567,7 +346,7 @@ async def send_mail(
         db.add(mail)
     
     db.commit()
-    return {"status": "success", "message": f"已发送给 {len(recipients)} 个用户"}
+    return {"status": "success", "message": f"已发送给 {len(recipients)} 个角色"}
 
 # 数据统计相关路由
 @admin_router.get("/stats", response_class=HTMLResponse)

@@ -26,7 +26,7 @@ class Account(SoftDeleteMixin, Base):
     username = Column(String(50), unique=True, index=True, nullable=False) #用户名
     password = Column(String(100), nullable=False) #密码
     
-    # 增字段
+    # 段
     wallet_address = Column(String(100), unique=True, nullable=True)  # 钱包地址
     status = Column(Integer, default=1, nullable=False)  # 0: 未激活, 1: 正常, 2: 已封禁
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)  # 创建时间
@@ -65,40 +65,6 @@ class Race(enum.Enum):
     MONSTER = 2    # 妖
     GHOST = 3      # 鬼
     IMMORTAL = 4   # 仙
-
-# 道具类型枚举
-class ItemType(enum.Enum):
-    EQUIPMENT = "装备"
-    CONSUMABLE = "消耗品"
-    MATERIAL = "材料"
-    QUEST = "任务物品"
-    OTHER = "其他"
-
-# 道具绑定状态枚举
-class BindType(enum.Enum):
-    NONE = "不绑定"
-    PICKUP = "拾取绑定"
-    EQUIP = "装备绑定"
-    ACCOUNT = "账号绑定"
-
-# 装备位置枚举
-class EquipmentSlot(enum.Enum):
-    WEAPON = "武器"
-    OFFHAND = "副手"
-    HEAD = "头部"
-    NECK = "项链"
-    SHOULDER = "肩部"
-    CHEST = "胸甲"
-    WAIST = "腰带"
-    LEGS = "腿部"
-    FEET = "靴子"
-    WRIST = "护腕"
-    HANDS = "手套"
-    FINGER1 = "戒指1"
-    FINGER2 = "戒指2"
-    TRINKET1 = "饰品1"
-    TRINKET2 = "饰品2"
-    BACK = "披风"
 
 # 装备表（记录角色当前装备）
 class CharacterEquipment(SoftDeleteMixin, Base):
@@ -190,7 +156,7 @@ class Character(SoftDeleteMixin, Base):
     # 基础属性
     max_hp = Column(Integer, default=100, nullable=False)  # 最大生命值
     current_hp = Column(Integer, default=100, nullable=False)  # 当前生命值
-    max_mp = Column(Integer, default=100, nullable=False)  # 最大法力值
+    max_mp = Column(Integer, default=100, nullable=False)  # 最���法力值
     current_mp = Column(Integer, default=100, nullable=False)  # 当前法力值
     
     # 战斗属性
@@ -226,7 +192,7 @@ class Character(SoftDeleteMixin, Base):
     account = relationship("Account", back_populates="characters")
     inventory_items = relationship("Inventory", back_populates="character")
     equipment = relationship("CharacterEquipment", uselist=False, back_populates="character")
-    mails = relationship("Mail", back_populates="receiver")
+    mails = relationship("Mail", back_populates="character")
     quests = relationship("CharacterQuest", back_populates="character")
     favor_records = relationship("FavorRecord", back_populates="character")
     
@@ -244,26 +210,23 @@ class Inventory(SoftDeleteMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     character_id = Column(Integer, ForeignKey("characters.id"), nullable=False, index=True)
     
-    # 道具基本信息
-    item_id = Column(Integer, nullable=False, index=True)  # 道具ID
-    item_type = Column(Enum(ItemType), nullable=False)     # 道具类型
+    # 核心信息
+    item_id = Column(Integer, nullable=False, index=True)  # 道具ID（关联到静态配置）
     quantity = Column(Integer, default=1, nullable=False)   # 数量
     
-    # 背包相关
+    # 动态属性
+    durability = Column(Integer, nullable=True)            # 当前耐久度
+    strengthen_level = Column(Integer, default=0)          # 强化等级
+    bind_status = Column(Integer, default=0)              # 绑定状态：0-未绑定 1-已绑定
     slot = Column(Integer, nullable=False)                 # 背包格子位置
     bag_type = Column(Integer, default=0, nullable=False)  # 背包类型：0-主背包 1-材料包 2-任务包
     
-    # 绑定相关
-    bind_type = Column(Enum(BindType), default=BindType.NONE)  # 绑定类型
-    bound_to = Column(Integer, nullable=True)                  # 绑定角色ID
-    
     # 时效相关
-    expire_time = Column(DateTime, nullable=True)          # 过期时间
+    expire_time = Column(DateTime, nullable=True)          # 过期时间（如果有）
     created_at = Column(DateTime, default=datetime.datetime.utcnow)  # 获得时间
     
-    # 其他属性
-    attributes = Column(JSON, nullable=True)               # 额外属性（如强化等级、宝石槽等）
-    durability = Column(Integer, nullable=True)            # 耐久度（装备特有）
+    # 扩展属性（仅存储动态/个性化数据）
+    extra_attributes = Column(JSON, nullable=True)         # 额外动态属性（如宝石镶嵌、附魔等）
     
     # 关系
     character = relationship("Character", back_populates="inventory_items")
@@ -300,7 +263,7 @@ class Mail(SoftDeleteMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     
     # 收发信息
-    receiver_id = Column(Integer, ForeignKey("characters.id"), nullable=False, index=True)  # 接收者角色ID
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=False, index=True)  # 接收者角色ID
     sender_id = Column(Integer, nullable=False)  # 发送者ID（0表示系统）
     sender_name = Column(String(50), nullable=False)  # 发送者名称
     
@@ -327,7 +290,7 @@ class Mail(SoftDeleteMixin, Base):
     )  # 过期时间（7天后过期）
     
     # 关系
-    receiver = relationship("Character", back_populates="mails")
+    character = relationship("Character", back_populates="mails")
 
     __table_args__ = {
         'mysql_engine': 'InnoDB',
@@ -359,18 +322,20 @@ class CharacterQuest(SoftDeleteMixin, Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     character_id = Column(Integer, ForeignKey("characters.id"), nullable=False, index=True)
-    quest_id = Column(Integer, nullable=False)  # 任务模板ID
-    quest_type = Column(Enum(QuestType), nullable=False)  # 任务类型
+    quest_id = Column(Integer, nullable=False)  # 任务ID（关联到静态配置）
     status = Column(Enum(QuestStatus), default=QuestStatus.NOT_STARTED)  # 任务状态
     
     # 任务进度
-    progress = Column(JSON)  # 任务进度，JSON格式存储 {target_id: count, ...}
+    progress = Column(JSON)  # 任务进度，JSON格式存储 {target_id: current_count}
     current_step = Column(Integer, default=1)  # 当前步骤
     
     # 时间信息
     accept_time = Column(DateTime, default=datetime.datetime.utcnow)  # 接取时间
     complete_time = Column(DateTime, nullable=True)  # 完成时间
     expire_time = Column(DateTime, nullable=True)  # 过期时间（用于限时任务）
+    
+    # 动态数据
+    custom_data = Column(JSON, nullable=True)  # 任务相关的动态数据（如玩家选择等）
     
     # 关系
     character = relationship("Character", back_populates="quests")
@@ -436,70 +401,7 @@ class FavorRecord(SoftDeleteMixin, Base):
         }
     )
 
-# 道具品质枚举
-class ItemQuality(enum.Enum):
-    NORMAL = "普通"
-    MAGIC = "魔法"
-    RARE = "稀有"
-    EPIC = "史诗"
-    LEGENDARY = "传说"
-    ARTIFACT = "神器"
-
-# 道具模板表
-class ItemTemplate(SoftDeleteMixin, Base):
-    __tablename__ = "item_templates"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(50), nullable=False)  # 道具名称
-    description = Column(Text, nullable=True)  # 道具描述
-    icon = Column(String(255), nullable=True)  # 图标路径
-    
-    # 基本属性
-    type = Column(Enum(ItemType), nullable=False)  # 道具类型
-    quality = Column(Enum(ItemQuality), nullable=False)  # 道具品质
-    level = Column(Integer, default=1)  # 道具等级
-    
-    # 堆叠和绑定
-    max_stack = Column(Integer, default=1)  # 最大堆叠数量
-    bind_type = Column(Enum(BindType), default=BindType.NONE)  # 绑定类型
-    
-    # 装备专属属性（只有type为EQUIPMENT时才有效）
-    equipment_slot = Column(Enum(EquipmentSlot), nullable=True)  # 装备位置
-    physical_attack = Column(Integer, default=0, nullable=True)  # 物理攻击
-    magic_attack = Column(Integer, default=0, nullable=True)  # 魔法攻击
-    physical_defense = Column(Integer, default=0, nullable=True)  # 物理防御
-    magic_defense = Column(Integer, default=0, nullable=True)  # 魔法防御
-    hp_bonus = Column(Integer, default=0, nullable=True)  # 生命值加成
-    mp_bonus = Column(Integer, default=0, nullable=True)  # 法力值加成
-    
-    # 使用相关
-    usable = Column(Integer, default=0)  # 是否可用
-    use_script = Column(String(255), nullable=True)  # 使用脚本
-    cooldown = Column(Integer, default=0)  # 使用冷却时间（秒）
-    
-    # 交易相关
-    tradeable = Column(Integer, default=1)  # 是否可交易
-    sellable = Column(Integer, default=1)  # 是否可出售
-    buy_price = Column(Integer, default=0)  # 购买价格
-    sell_price = Column(Integer, default=0)  # 出售价格
-    
-    # 其他属性
-    extra_attributes = Column(JSON, nullable=True)  # 额外属性
-    
-    __table_args__ = (
-        # 添加检查约束：如果type是EQUIPMENT，则equipment_slot不能为空
-        sqlalchemy.CheckConstraint(
-            "(type != 'EQUIPMENT') OR (type = 'EQUIPMENT' AND equipment_slot IS NOT NULL)",
-            name='check_equipment_slot'
-        ),
-        {
-            'mysql_engine': 'InnoDB',
-            'mysql_charset': 'utf8mb4',
-            'mysql_collate': 'utf8mb4_unicode_ci'
-        }
-    )
-
-# 确保导出这两个类
+# 确保导出这些类
 __all__ = [
     # 基础模型
     'Account',
@@ -510,18 +412,24 @@ __all__ = [
     'Mail',
     'CharacterQuest',
     'FavorRecord',
-    'ItemTemplate',
+    'SoftDeleteMixin',
     
     # 枚举类型
     'UserRole',
     'Race',
-    'ItemType',
-    'BindType',
-    'EquipmentSlot',
     'MailType',
     'MailStatus',
     'QuestStatus',
     'QuestType',
-    'FavorTargetType',
-    'ItemQuality'
+    'FavorTargetType'
 ]
+
+# 角色相关表列表
+CHARACTER_RELATED_MODELS = {
+    'Character': Character,
+    'Inventory': Inventory,
+    'CharacterEquipment': CharacterEquipment,
+    'CharacterQuest': CharacterQuest,
+    'FavorRecord': FavorRecord,
+    'Mail': Mail
+}

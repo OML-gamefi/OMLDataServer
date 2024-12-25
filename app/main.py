@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
 import json
 import traceback
@@ -13,25 +13,9 @@ import inspect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from enum import Enum
-import app.models as models_module
-from app.utils.password import verify_password
-import sqlalchemy.exc
-from app.admin.routes import admin_router
-from app.utils.ai_service import ai_service, ChatRequest, ChatResponse
-
-from app.crud.base import CRUDRegister
-from app.auth.token import create_token, verify_token, invalidate_token
-from pydantic import BaseModel
-
-# 修改日志配置
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
 
 # 导入配置
+logger = logging.getLogger(__name__)
 logger.info("Loading settings...")
 from app.config import settings
 logger.info(f"Settings loaded - DB_HOST: {settings.DB_HOST}")
@@ -41,9 +25,22 @@ logger.info("Initializing database...")
 from app.database import SessionLocal, engine, Base
 logger.info("Database initialized")
 
-from app.models import (
-    Account, UserToken, Character, CharacterEquipment, 
-    Race, FavorRecord, FavorTargetType
+# 导入模型和工具
+from app.models import *
+from app.models import CHARACTER_RELATED_MODELS, __all__ as model_all, SoftDeleteMixin
+from app.utils.password import verify_password
+import sqlalchemy.exc
+from app.admin.routes import admin_router
+from app.utils.ai_service import ai_service, ChatRequest, ChatResponse
+from app.crud.base import CRUDRegister
+from app.auth.token import create_token, verify_token, invalidate_token
+from pydantic import BaseModel
+
+# 修改日志配置
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 
 # 创建FastAPI应用
@@ -65,7 +62,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         logger.debug(f"请求URL: {request.url}")
         logger.debug(f"请求头: {dict(request.headers)}")
         
-        # ��取请求体
+        # 取请求体
         body = await request.body()
         if body:
             try:
@@ -128,18 +125,17 @@ def get_db():
         db.close()
 
 # 动态注册所有模型
-for attr_name in dir(models_module):
-    attr = getattr(models_module, attr_name)
-    # 检查是否是 SQLAlchemy 模型类
-    if (inspect.isclass(attr) and 
-        issubclass(attr, Base) and 
-        attr != Base and 
-        attr != models_module.SoftDeleteMixin):  # 排除基类
+for model_name in model_all:
+    model = globals().get(model_name)
+    if (inspect.isclass(model) and 
+        issubclass(model, Base) and 
+        model != Base and 
+        model != SoftDeleteMixin):  # 排除基类
         # 注册到 CRUD
-        CRUDRegister.register(attr)
+        CRUDRegister.register(model)
         # 创建表
-        attr.metadata.create_all(bind=engine)
-        logger.debug(f"已注册并创建表: {attr_name}")
+        model.metadata.create_all(bind=engine)
+        logger.debug(f"已注册并创建表: {model_name}")
 
 # 添加登录请求模型
 class LoginRequest(BaseModel):
@@ -535,7 +531,7 @@ async def get_current_user(
     db: Session = Depends(get_db)
 ) -> Account:
     try:
-        logger.debug(f"验证用户请求 - ��整信息:")
+        logger.debug(f"验证用户请求 - 完整信息:")
         logger.debug(f"URL: {request.url}")
         logger.debug(f"Headers: {dict(request.headers)}")
         logger.debug(f"Service Code: {commons.service_code}")
@@ -690,7 +686,7 @@ async def read_user_characters(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise
 
-# 修改为GET方法，使用header参数
+# 修改为GET方法，使用header数
 @user_router.get("/devices")
 async def read_user_devices(
     request: Request,
@@ -828,6 +824,84 @@ async def create_character(
         logger.error(f"创建角色失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         db.rollback()
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+
+# 添加玩家数据查询路由
+class TableRequest(BaseModel):
+    table_name: str
+
+@character_router.post("/query_data")
+async def query_character_data(
+    request: Request,
+    data: TableRequest,
+    commons: CommonHeaders = Depends(),
+    current_user: Account = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        logger.debug(f"查询玩家数据请求 - 完整信息:")
+        logger.debug(f"URL: {request.url}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"请求表名: {data.table_name}")
+        
+        # 获取当前角色
+        character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
+        
+        if not character:
+            raise HTTPException(status_code=404, detail="未找到角色信息")
+            
+        # 获取对应的模型类
+        if data.table_name not in CHARACTER_RELATED_MODELS:
+            raise HTTPException(status_code=400, detail="不支持的表名")
+            
+        model_class = CHARACTER_RELATED_MODELS[data.table_name]
+        
+        # 查询数据
+        query = db.query(model_class).filter(
+            model_class.character_id == character.id,
+            model_class.is_deleted == 0
+        )
+        
+        # 特殊处理：如果是装备表，只返回一条记录
+        if data.table_name == "CharacterEquipment":
+            results = query.first()
+            if results:
+                results = [results]  # 转换为列表以统一处理
+            else:
+                results = []
+        else:
+            results = query.all()
+            
+        # 处理结果
+        response_data = []
+        for item in results:
+            item_dict = {}
+            for column in item.__table__.columns:
+                value = getattr(item, column.name)
+                # 处理特殊类型
+                if isinstance(value, datetime):
+                    value = value.isoformat()
+                elif isinstance(value, Enum):  # 使用已导入的Enum
+                    value = value.value
+                item_dict[column.name] = value
+            response_data.append(item_dict)
+            
+        logger.debug(f"查询到 {len(response_data)} 条记录")
+        return {
+            "table": data.table_name,
+            "character_id": character.id,
+            "total": len(response_data),
+            "data": response_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询玩家数据失败: {str(e)}")
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
 
 # 添加AI路由
