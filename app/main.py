@@ -27,7 +27,7 @@ logger.info("Database initialized")
 
 # 导入模型和工具
 from app.models import *
-from app.models import CHARACTER_RELATED_MODELS, __all__ as model_all, SoftDeleteMixin
+from app.models import CHARACTER_RELATED_MODELS, __all__ as model_all, SoftDeleteMixin, format_character_data
 from app.utils.password import verify_password
 import sqlalchemy.exc
 from app.admin.routes import admin_router
@@ -610,41 +610,9 @@ async def read_me(
             "created_at": current_user.created_at,
             "oml_coin": current_user.oml_coin,
             "user_setting": current_user.user_setting,
-            "character": None if not current_character else {
-                "id": current_character.id,
-                "name": current_character.name,
-                "race": current_character.race.value,
-                "sect_name": current_character.sect_name,
-                "current_location": current_character.current_location,
-                "level": current_character.level,
-                "exp": current_character.exp,
-                "max_exp": current_character.max_exp,
-                # 基础属性
-                "max_hp": current_character.max_hp,
-                "current_hp": current_character.current_hp,
-                "max_mp": current_character.max_mp,
-                "current_mp": current_character.current_mp,
-                # 战斗属性
-                "physical_attack": current_character.physical_attack,
-                "magic_attack": current_character.magic_attack,
-                "physical_defense": current_character.physical_defense,
-                "magic_defense": current_character.magic_defense,
-                # 其他属性
-                "speed": current_character.speed,
-                "critical_rate": current_character.critical_rate,
-                "critical_damage": current_character.critical_damage,
-                "hit_rate": current_character.hit_rate,
-                "dodge_rate": current_character.dodge_rate,
-                "morality": current_character.morality,
-                "max_stamina": current_character.max_stamina,
-                "current_stamina": current_character.current_stamina,
-                "copper_coins": current_character.copper_coins,
-                # 时间信息
-                "created_at": current_character.created_at,
-                "last_login": current_character.last_login,
-                "last_logout": current_character.last_logout
-            }
+            "character": format_character_data(current_character)
         }
+        
         logger.debug(f"获取用户信息成功: {json.dumps(response_data, ensure_ascii=False, default=datetime_handler)}")
         return response_data
     except Exception as e:
@@ -670,14 +638,7 @@ async def read_user_characters(
             Character.is_deleted == 0
         ).first()
         
-        if character:
-            char_list = [{
-                'id': character.id,
-                'name': character.name,
-                'level': character.level
-            }]
-        else:
-            char_list = []
+        char_list = [format_character_data(character)] if character else []
             
         logger.debug(f"角色列表: {json.dumps(char_list, ensure_ascii=False)}")
         return char_list
@@ -830,7 +791,7 @@ async def create_character(
 class TableRequest(BaseModel):
     table_name: str
 
-@character_router.post("/query_data")
+@character_router.post("/query_character_data")
 async def query_character_data(
     request: Request,
     data: TableRequest,
@@ -860,20 +821,25 @@ async def query_character_data(
         model_class = CHARACTER_RELATED_MODELS[data.table_name]
         
         # 查询数据
-        query = db.query(model_class).filter(
-            model_class.character_id == character.id,
-            model_class.is_deleted == 0
-        )
-        
-        # 特殊处理：如果是装备表，只返回一条记录
-        if data.table_name == "CharacterEquipment":
-            results = query.first()
-            if results:
-                results = [results]  # 转换为列表以统一处理
-            else:
-                results = []
+        if data.table_name == 'Character':
+            # Character表特殊处理
+            results = [character]
         else:
-            results = query.all()
+            # 其他表通过character_id关联查询
+            query = db.query(model_class).filter(
+                model_class.character_id == character.id,
+                model_class.is_deleted == 0
+            )
+            
+            # 特殊处理：如果是装备表，只返回一条记录
+            if data.table_name == "CharacterEquipment":
+                results = query.first()
+                if results:
+                    results = [results]
+                else:
+                    results = []
+            else:
+                results = query.all()
             
         # 处理结果
         response_data = []
@@ -884,7 +850,7 @@ async def query_character_data(
                 # 处理特殊类型
                 if isinstance(value, datetime):
                     value = value.isoformat()
-                elif isinstance(value, Enum):  # 使用已导入的Enum
+                elif isinstance(value, Enum):
                     value = value.value
                 item_dict[column.name] = value
             response_data.append(item_dict)

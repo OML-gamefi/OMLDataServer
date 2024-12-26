@@ -156,7 +156,7 @@ class Character(SoftDeleteMixin, Base):
     # 基础属性
     max_hp = Column(Integer, default=100, nullable=False)  # 最大生命值
     current_hp = Column(Integer, default=100, nullable=False)  # 当前生命值
-    max_mp = Column(Integer, default=100, nullable=False)  # 最���法力值
+    max_mp = Column(Integer, default=100, nullable=False)  # 最大法力值
     current_mp = Column(Integer, default=100, nullable=False)  # 当前法力值
     
     # 战斗属性
@@ -433,3 +433,47 @@ CHARACTER_RELATED_MODELS = {
     'FavorRecord': FavorRecord,
     'Mail': Mail
 }
+
+def format_character_data(character: Character) -> dict:
+    """
+    将角色数据格式化为标准格式
+    :param character: Character对象
+    :return: 格式化后的字典
+    """
+    if not character:
+        return None
+        
+    return {
+        'id': character.id,
+        'name': character.name,
+        'race': character.race.value if character.race else None,
+        'level': character.level,
+        'exp': character.exp,
+        'max_exp': character.max_exp,
+        'sect_name': character.sect_name,
+        'current_location': character.current_location,
+        # 基础属性
+        'max_hp': character.max_hp,
+        'current_hp': character.current_hp,
+        'max_mp': character.max_mp,
+        'current_mp': character.current_mp,
+        # 战斗属性
+        'physical_attack': character.physical_attack,
+        'magic_attack': character.magic_attack,
+        'physical_defense': character.physical_defense,
+        'magic_defense': character.magic_defense,
+        'speed': character.speed,
+        'critical_rate': character.critical_rate,
+        'critical_damage': character.critical_damage,
+        'hit_rate': character.hit_rate,
+        'dodge_rate': character.dodge_rate,
+        # 其他属性
+        'morality': character.morality,
+        'max_stamina': character.max_stamina,
+        'current_stamina': character.current_stamina,
+        'copper_coins': character.copper_coins,
+        # 时间信息
+        'created_at': character.created_at.isoformat() if character.created_at else None,
+        'last_login': character.last_login.isoformat() if character.last_login else None,
+        'last_logout': character.last_logout.isoformat() if character.last_logout else None
+    }
