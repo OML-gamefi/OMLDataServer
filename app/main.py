@@ -1169,6 +1169,159 @@ async def add_items_to_inventory(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
 
+# 软删除请求模型
+class SoftDeleteRequest(BaseModel):
+    table_name: str
+    record_id: int
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "table_name": "inventory",
+                "record_id": 1
+            }
+        }
+
+# 管理员软删除接口
+@admin_router.post("/record/delete")
+async def admin_soft_delete(
+    request: Request,
+    data: SoftDeleteRequest,
+    commons: CommonHeaders = Depends(),
+    current_user: Account = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    管理员软删除记录接口（需要管理员权限）
+    
+    可以删除任意表的记录，会记录删除时间和删除者
+    """
+    try:
+        logger.debug(f"管理员删除请求 - 完整信息:")
+        logger.debug(f"URL: {request.url}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"操作数据: {data.dict()}")
+        
+        # 验证管理员权限
+        if current_user.role != UserRole.ADMIN:
+            raise HTTPException(status_code=403, detail="需要管理员权限")
+            
+        # 获取对应的模型类
+        if data.table_name not in model_all:
+            raise HTTPException(status_code=400, detail=f"表名 {data.table_name} 不存在")
+            
+        model_class = globals()[data.table_name]
+        if not issubclass(model_class, SoftDeleteMixin):
+            raise HTTPException(status_code=400, detail=f"表 {data.table_name} 不支持软删除")
+            
+        # 查找记录
+        record = db.query(model_class).filter(
+            model_class.id == data.record_id,
+            model_class.is_deleted == 0
+        ).first()
+        
+        if not record:
+            raise HTTPException(status_code=404, detail=f"未找到ID为 {data.record_id} 的记录或记录已删除")
+            
+        # 执行软删除
+        record.is_deleted = 1
+        record.deleted_at = datetime.utcnow()
+        record.deleted_by = current_user.id
+        
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": "记录删除成功",
+            "table": data.table_name,
+            "record_id": data.record_id,
+            "deleted_at": record.deleted_at,
+            "deleted_by": record.deleted_by
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除记录失败: {str(e)}")
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+
+# 用户软删除接口
+@character_router.post("/record/delete")
+async def user_soft_delete(
+    request: Request,
+    data: SoftDeleteRequest,
+    commons: CommonHeaders = Depends(),
+    current_user: Account = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    用户软删除记录接口
+    
+    只能删除与当前用户相关的记录，会记录删除时间和删除者
+    """
+    try:
+        logger.debug(f"用户删除请求 - 完整信息:")
+        logger.debug(f"URL: {request.url}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"操作数据: {data.dict()}")
+        
+        # 获取当前角色
+        character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
+        
+        if not character:
+            raise HTTPException(status_code=404, detail="未找到角色信息")
+            
+        # 验证表名是否在允许的列表中
+        if data.table_name not in CHARACTER_RELATED_MODELS:
+            raise HTTPException(status_code=400, detail=f"不允许删除 {data.table_name} 表的记录")
+            
+        model_class = globals()[data.table_name]
+        if not issubclass(model_class, SoftDeleteMixin):
+            raise HTTPException(status_code=400, detail=f"表 {data.table_name} 不支持软删除")
+            
+        # 首先检查记录是否存在
+        record = db.query(model_class).filter(
+            model_class.id == data.record_id,
+            model_class.is_deleted == 0
+        ).first()
+        
+        if not record:
+            raise HTTPException(status_code=404, detail=f"记录不存在或已被删除")
+            
+        # 然后检查是否有权限删除
+        if hasattr(model_class, 'character_id'):
+            if record.character_id != character.id:
+                raise HTTPException(status_code=403, detail="无权删除此记录")
+        else:
+            raise HTTPException(status_code=400, detail=f"表 {data.table_name} 不支持用户删除")
+            
+        # 执行软删除
+        record.is_deleted = 1
+        record.deleted_at = datetime.utcnow()
+        record.deleted_by = current_user.id
+        
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": "记录删除成功",
+            "table": data.table_name,
+            "record_id": data.record_id,
+            "deleted_at": record.deleted_at,
+            "deleted_by": record.deleted_by
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除记录失败: {str(e)}")
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+
 # 注册路由
 app.include_router(crud_router)
 app.include_router(auth_router)
