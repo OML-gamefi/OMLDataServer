@@ -73,17 +73,13 @@ class CharacterEquipment(SoftDeleteMixin, Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     character_id = Column(Integer, ForeignKey("characters.id"), nullable=False, unique=True)
     
-    # 各个部位装备的背包物品ID（关联到inventory表的id）
-    weapon_id = Column(Integer, nullable=True)        # 武器
-    armor_id = Column(Integer, nullable=True)         # 护甲
-    helmet_id = Column(Integer, nullable=True)        # 头部
-    necklace_id = Column(Integer, nullable=True)      # 项链
-    ring_1_id = Column(Integer, nullable=True)        # 戒指1
-    ring_2_id = Column(Integer, nullable=True)        # 戒指2
-    bracelet_1_id = Column(Integer, nullable=True)    # 手镯1
-    bracelet_2_id = Column(Integer, nullable=True)    # 手镯2
-    belt_id = Column(Integer, nullable=True)          # 腰带
-    shoes_id = Column(Integer, nullable=True)         # 鞋子
+    # 基础装备槽位
+    weapon_id = Column(Integer, nullable=True)        # 1: 武器
+    hat_id = Column(Integer, nullable=True)          # 2: 帽子
+    cloth_id = Column(Integer, nullable=True)        # 3: 衣服
+    ornament_id = Column(Integer, nullable=True)     # 4: 饰品
+    pendant_id = Column(Integer, nullable=True)      # 5: 挂坠
+    shoes_id = Column(Integer, nullable=True)        # 6: 鞋子
     
     # 更新时间
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -98,35 +94,19 @@ class CharacterEquipment(SoftDeleteMixin, Base):
             ondelete='SET NULL'
         ),
         sqlalchemy.ForeignKeyConstraint(
-            ['armor_id'], ['inventory.id'],
+            ['hat_id'], ['inventory.id'],
             ondelete='SET NULL'
         ),
         sqlalchemy.ForeignKeyConstraint(
-            ['helmet_id'], ['inventory.id'],
+            ['cloth_id'], ['inventory.id'],
             ondelete='SET NULL'
         ),
         sqlalchemy.ForeignKeyConstraint(
-            ['necklace_id'], ['inventory.id'],
+            ['ornament_id'], ['inventory.id'],
             ondelete='SET NULL'
         ),
         sqlalchemy.ForeignKeyConstraint(
-            ['ring_1_id'], ['inventory.id'],
-            ondelete='SET NULL'
-        ),
-        sqlalchemy.ForeignKeyConstraint(
-            ['ring_2_id'], ['inventory.id'],
-            ondelete='SET NULL'
-        ),
-        sqlalchemy.ForeignKeyConstraint(
-            ['bracelet_1_id'], ['inventory.id'],
-            ondelete='SET NULL'
-        ),
-        sqlalchemy.ForeignKeyConstraint(
-            ['bracelet_2_id'], ['inventory.id'],
-            ondelete='SET NULL'
-        ),
-        sqlalchemy.ForeignKeyConstraint(
-            ['belt_id'], ['inventory.id'],
+            ['pendant_id'], ['inventory.id'],
             ondelete='SET NULL'
         ),
         sqlalchemy.ForeignKeyConstraint(
@@ -218,7 +198,7 @@ class Inventory(SoftDeleteMixin, Base):
     durability = Column(Integer, nullable=True)            # 当前耐久度
     strengthen_level = Column(Integer, default=0)          # 强化等级
     bind_status = Column(Integer, default=0)              # 绑定状态：0-未绑定 1-已绑定
-    slot = Column(Integer, nullable=False)                 # 背包格子位置
+    equipped = Column(Integer, default=0, nullable=False)  # 装备状态：0-未装备 1-已装备
     bag_type = Column(Integer, default=0, nullable=False)  # 背包类型：0-主背包 1-材料包 2-任务包
     
     # 时效相关
@@ -231,15 +211,11 @@ class Inventory(SoftDeleteMixin, Base):
     # 关系
     character = relationship("Character", back_populates="inventory_items")
 
-    __table_args__ = (
-        # 确保同一角色在同一背包类型中不会有重复的格子位置
-        sqlalchemy.UniqueConstraint('character_id', 'bag_type', 'slot'),
-        {
-            'mysql_engine': 'InnoDB',
-            'mysql_charset': 'utf8mb4',
-            'mysql_collate': 'utf8mb4_unicode_ci'
-        }
-    )
+    __table_args__ = {
+        'mysql_engine': 'InnoDB',
+        'mysql_charset': 'utf8mb4',
+        'mysql_collate': 'utf8mb4_unicode_ci'
+    }
 
 # 邮件类型枚举
 class MailType(enum.Enum):

@@ -13,6 +13,7 @@ import inspect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from enum import Enum
+from app.utils.static_data import static_data
 
 # 导入配置
 logger = logging.getLogger(__name__)
@@ -881,6 +882,292 @@ async def chat(request: ChatRequest):
     - **max_tokens**: 最大token数（可选）
     """
     return await ai_service.chat_completion(request)
+
+# 添加装备操作请求模型
+class EquipmentOperationType(str, Enum):
+    EQUIP = "equip"      # 穿上装备
+    UNEQUIP = "unequip"  # 脱下装备
+
+class EquipmentSlotType(int, Enum):
+    WEAPON = 1    # 武器
+    HAT = 2       # 帽子
+    CLOTH = 3     # 衣服
+    ORNAMENT = 4  # 饰品
+    PENDANT = 5   # 挂坠
+    SHOES = 6     # 鞋子
+
+class EquipmentOperationRequest(BaseModel):
+    slot_type: EquipmentSlotType
+    item_id: Optional[int] = None  # 穿装备时需要，脱装备时可以为空
+    operation: EquipmentOperationType
+
+@character_router.post("/equipment/operate")
+async def operate_equipment(
+    request: Request,
+    data: EquipmentOperationRequest,
+    commons: CommonHeaders = Depends(),
+    current_user: Account = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        logger.debug(f"装备操作请求 - 完整信息:")
+        logger.debug(f"URL: {request.url}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"操作数据: {data.dict()}")
+        
+        # 获取当前角色
+        character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
+        
+        if not character:
+            raise HTTPException(status_code=404, detail="未找到角色信息")
+            
+        # 获取角色装备信息
+        equipment = db.query(CharacterEquipment).filter(
+            CharacterEquipment.character_id == character.id
+        ).first()
+        
+        if not equipment:
+            raise HTTPException(status_code=404, detail="未找到装备信息")
+            
+        # 槽位ID映射
+        slot_map = {
+            EquipmentSlotType.WEAPON: "weapon_id",
+            EquipmentSlotType.HAT: "hat_id",
+            EquipmentSlotType.CLOTH: "cloth_id",
+            EquipmentSlotType.ORNAMENT: "ornament_id",
+            EquipmentSlotType.PENDANT: "pendant_id",
+            EquipmentSlotType.SHOES: "shoes_id"
+        }
+        
+        slot_field = slot_map[data.slot_type]
+        
+        if data.operation == EquipmentOperationType.EQUIP:
+            if not data.item_id:
+                raise HTTPException(status_code=400, detail="装备操作需要提供物品ID")
+                
+            # 获取物品静态数据
+            item_static_data = static_data.get_item_data(data.item_id)
+            if not item_static_data:
+                raise HTTPException(status_code=400, detail="物品配置不存在")
+                
+            # 检查物品类型是否匹配槽位
+            if item_static_data["type"] != data.slot_type.value:
+                raise HTTPException(status_code=400, detail="物品类型与装备槽位不匹配")
+                
+            # 检查物品是否存在且属于该角色
+            item = db.query(Inventory).filter(
+                Inventory.item_id == data.item_id,
+                Inventory.character_id == character.id,
+                Inventory.is_deleted == 0
+            ).first()
+            
+            if not item:
+                raise HTTPException(status_code=404, detail="未找到指定物品")
+                
+            # 检查物品是否已经装备
+            if item.equipped == 1:
+                raise HTTPException(status_code=400, detail="该物品已经装备")
+                
+            # 如果该槽位已有装备，先卸下
+            current_equipped = getattr(equipment, slot_field)
+            if current_equipped:
+                # 获取当前装备的物品并更新状态
+                current_item = db.query(Inventory).filter(
+                    Inventory.id == current_equipped,
+                    Inventory.is_deleted == 0
+                ).first()
+                if current_item:
+                    current_item.equipped = 0
+                
+            # 装备新物品
+            setattr(equipment, slot_field, item.id)  # 使用inventory表的id
+            item.equipped = 1  # 标记为已装备
+            
+        else:  # UNEQUIP
+            # 获取当前装备的物品ID
+            current_equipped = getattr(equipment, slot_field)
+            if not current_equipped:
+                raise HTTPException(status_code=400, detail="该槽位没有装备物品")
+                
+            # 获取当前装备的物品并更新状态
+            current_item = db.query(Inventory).filter(
+                Inventory.id == current_equipped,
+                Inventory.is_deleted == 0
+            ).first()
+            if current_item:
+                current_item.equipped = 0
+                
+            # 卸下装备
+            setattr(equipment, slot_field, None)
+            
+        db.commit()
+        
+        # 返回更新后的装备信息
+        equipped_items = {}
+        for slot_type, field_name in slot_map.items():
+            inventory_id = getattr(equipment, field_name)
+            if inventory_id:
+                inventory_item = db.query(Inventory).filter(
+                    Inventory.id == inventory_id,
+                    Inventory.is_deleted == 0
+                ).first()
+                if inventory_item:
+                    static_info = static_data.get_item_data(inventory_item.item_id)
+                    equipped_items[slot_type.value] = {
+                        "inventory_id": inventory_id,
+                        "item_id": inventory_item.item_id,
+                        "name": static_info.get("name"),
+                        "quality": static_info.get("quality"),
+                        "attr": static_info.get("attr"),
+                        "strengthen_level": inventory_item.strengthen_level,
+                        "durability": inventory_item.durability
+                    }
+        
+        return {
+            "status": "success",
+            "message": "装备操作成功",
+            "operation": data.operation,
+            "slot_type": data.slot_type,
+            "item_id": data.item_id,
+            "equipped_items": equipped_items
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"装备操作失败: {str(e)}")
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+
+# 添加物品请求模型
+class ItemEntry(BaseModel):
+    item_id: int
+    quantity: int
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "item_id": 1001,
+                "quantity": 1
+            }
+        }
+
+class ItemAddRequest(BaseModel):
+    items: List[ItemEntry]
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "items": [
+                    {"item_id": 1001, "quantity": 1},
+                    {"item_id": 1002, "quantity": 5}
+                ]
+            }
+        }
+
+@character_router.post("/inventory/add")
+async def add_items_to_inventory(
+    request: Request,
+    data: ItemAddRequest,
+    commons: CommonHeaders = Depends(),
+    current_user: Account = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    添加物品到角色背包
+    
+    请求体示例:
+    {
+        "items": [
+            {"item_id": 1001, "quantity": 1},
+            {"item_id": 1002, "quantity": 5}
+        ]
+    }
+    """
+    try:
+        logger.debug(f"添加物品请求 - 完整信息:")
+        logger.debug(f"URL: {request.url}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"操作数据: {data.dict()}")
+        
+        # 获取当前角色
+        character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
+        
+        if not character:
+            raise HTTPException(status_code=404, detail="未找到角色信息")
+            
+        added_items = []
+        for item_data in data.items:
+            # 验证物品是否存在于配置中
+            item_config = static_data.get_item_data(item_data.item_id)
+            if not item_config:
+                raise HTTPException(status_code=400, detail=f"物品ID {item_data.item_id} 不存在")
+                
+            # 检查数量是否合法
+            if item_data.quantity <= 0:
+                raise HTTPException(status_code=400, detail=f"物品 {item_data.item_id} 的数量必须大于0")
+                
+            # 查找是否已有该物品
+            existing_item = db.query(Inventory).filter(
+                Inventory.character_id == character.id,
+                Inventory.item_id == item_data.item_id,
+                Inventory.is_deleted == 0
+            ).first()
+            
+            if existing_item:
+                # 如果物品已存在，增加数量
+                existing_item.quantity += item_data.quantity
+                added_items.append({
+                    "item_id": item_data.item_id,
+                    "name": item_config["name"],
+                    "quantity": item_data.quantity,
+                    "total_quantity": existing_item.quantity,
+                    "quality": item_config.get("quality", 0),
+                    "type": item_config.get("type", 0)
+                })
+            else:
+                # 创建新物品记录
+                new_item = Inventory(
+                    character_id=character.id,
+                    item_id=item_data.item_id,
+                    quantity=item_data.quantity,
+                    strengthen_level=0,  # 新物品强化等级为0
+                    durability=100,  # 新物品耐久度为100
+                    bind_status=0,  # 新物品未绑定
+                    extra_attributes={},  # 新物品无额外属性
+                    bag_type=1  # 默认背包类型为1（普通背包）
+                )
+                db.add(new_item)
+                added_items.append({
+                    "item_id": item_data.item_id,
+                    "name": item_config["name"],
+                    "quantity": item_data.quantity,
+                    "total_quantity": item_data.quantity,
+                    "quality": item_config.get("quality", 0),
+                    "type": item_config.get("type", 0)
+                })
+                
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": "物品添加成功",
+            "character_id": character.id,
+            "added_items": added_items
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"添加物品失败: {str(e)}")
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
 
 # 注册路由
 app.include_router(crud_router)
