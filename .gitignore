@@ -16,3 +16,4 @@ path/to/specific/folder/
 # 忽略文件夹下所有文件但保留文件夹
 folder/*
 !folder/.gitkeep
+/app/static/Item.json
