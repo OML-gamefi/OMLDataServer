@@ -1322,6 +1322,394 @@ async def user_soft_delete(
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
 
+# 物品操作请求模型
+class ItemOperationRequest(BaseModel):
+    operation: ItemOperationType
+    id: int
+    quantity: Optional[int] = 1  # 使用时的数量，默认为1
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "operation": ItemOperationType.EQUIP,
+                "id": 1
+            }
+        }
+
+@character_router.post("/item/operate", 
+    summary="物品操作接口",
+    description="""
+    物品操作接口，支持装备、卸下、使用和丢弃操作。
+    
+    参数说明：
+    - id: 背包物品ID（inventory表中的id）
+    - operation: 操作类型（0-3）
+    - quantity: 使用数量（可选，默认为1）
+    
+    操作类型：
+    - 0: 装备(EQUIP)
+    - 1: 卸下(UNEQUIP)
+    - 2: 使用(USE)
+    - 3: 丢弃(DISCARD)
+    
+    物品类型：
+    - 1: 武器(WEAPON)
+    - 2: 帽子(HAT)
+    - 3: 衣服(CLOTH)
+    - 4: 饰品(ORNAMENT)
+    - 5: 挂坠(PENDANT)
+    - 6: 鞋子(SHOES)
+    - 7: 任务道具(QUEST)
+    - 8: 药品(POTION)
+    - 9: 食物(FOOD)
+    - 10: 材料(MATERIAL)
+    - 11: 道具(MISC)
+    
+    属性类型：
+    装备属性：
+    - 1: 物理攻击
+    - 2: 魔法攻击
+    - 3: 物理防御
+    - 4: 魔法防御
+    
+    消耗品属性：
+    - 101: 当前生命值
+    - 102: 当前法力值
+    - 103: 生命值上限
+    - 104: 法力值上限
+    
+    示例请求：
+    1. 装备武器
+    ```json
+    {
+        "operation": 0,
+        "id": 1
+    }
+    ```
+    
+    2. 卸下武器
+    ```json
+    {
+        "operation": 1,
+        "id": 1
+    }
+    ```
+    
+    3. 使用药品（指定数量）
+    ```json
+    {
+        "operation": 2,
+        "id": 1,
+        "quantity": 5
+    }
+    ```
+    
+    4. 使用药品（默认数量1）
+    ```json
+    {
+        "operation": 2,
+        "id": 1
+    }
+    ```
+    
+    5. 丢弃物品
+    ```json
+    {
+        "operation": 3,
+        "id": 1
+    }
+    """,
+    response_description="返回操作结果，包含角色状态和装备信息"
+)
+async def operate_item(
+    request: Request,
+    data: ItemOperationRequest,
+    commons: CommonHeaders = Depends(),
+    current_user: Account = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        logger.debug(f"物品操作请求 - 完整信息:")
+        logger.debug(f"URL: {request.url}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"操作数据: {data.dict()}")
+        
+        # 获取当前角色
+        character = db.query(Character).filter(
+            Character.account_id == current_user.id,
+            Character.is_deleted == 0
+        ).first()
+        
+        if not character:
+            raise HTTPException(status_code=404, detail="未找到角色信息")
+            
+        # 获取物品信息
+        inventory_item = db.query(Inventory).filter(
+            Inventory.id == data.id,
+            Inventory.character_id == character.id,
+            Inventory.is_deleted == 0
+        ).first()
+        
+        if not inventory_item:
+            raise HTTPException(status_code=404, detail="未找到指定物品")
+            
+        # 获取物品静态数据
+        item_static_data = static_data.get_item_data(inventory_item.item_id)
+        if not item_static_data:
+            raise HTTPException(status_code=400, detail="物品配置不存在")
+            
+        # 根据操作类型处理
+        if data.operation in [ItemOperationType.EQUIP, ItemOperationType.UNEQUIP]:
+            # 获取角色装备信息
+            equipment = db.query(CharacterEquipment).filter(
+                CharacterEquipment.character_id == character.id
+            ).first()
+            
+            if not equipment:
+                raise HTTPException(status_code=404, detail="未找到装备信息")
+                
+            await _operate_equipment(db, character, inventory_item, item_static_data, 
+                                  data.operation, equipment)
+                
+        elif data.operation == ItemOperationType.USE:
+            # 检查物品是否可以使用
+            if item_static_data.get("use", 0) != 1:
+                raise HTTPException(status_code=400, detail="该物品不可使用")
+                
+            # 检查物品类型
+            item_type = ItemType(item_static_data["type"])
+            if item_type not in [ItemType.POTION, ItemType.FOOD]:
+                raise HTTPException(status_code=400, detail="该物品不是消耗品")
+                
+            # 检查数量是否足够
+            if inventory_item.quantity < data.quantity:
+                raise HTTPException(status_code=400, detail="物品数量不足")
+                
+            # 应用物品效果
+            if "attr" in item_static_data:
+                for attr_str in item_static_data["attr"].split(","):
+                    attr_type, value = map(int, attr_str.split("+"))
+                    if attr_type == ItemAttributeType.CURRENT_HP.value:
+                        character.current_hp = min(character.current_hp + value * data.quantity, character.max_hp)
+                    elif attr_type == ItemAttributeType.CURRENT_MP.value:
+                        character.current_mp = min(character.current_mp + value * data.quantity, character.max_mp)
+                    elif attr_type == ItemAttributeType.MAX_HP.value:
+                        character.max_hp += value * data.quantity
+                    elif attr_type == ItemAttributeType.MAX_MP.value:
+                        character.max_mp += value * data.quantity
+            
+            # 减少物品数量
+            inventory_item.quantity -= data.quantity
+            
+            # 如果数量为0，删除物品
+            if inventory_item.quantity <= 0:
+                await _soft_delete_record(db, character.id, current_user.id, 
+                                       "Inventory", inventory_item.id)
+            
+        else:  # DISCARD
+            # 如果物品已装备，不能丢弃
+            if inventory_item.equipped == 1:
+                raise HTTPException(status_code=400, detail="已装备的物品不能丢弃")
+                
+            await _soft_delete_record(db, character.id, current_user.id, 
+                                    "Inventory", inventory_item.id)
+            
+        db.commit()
+        
+        # 返回更新后的角色状态和物品信息
+        response_data = {
+            "status": "success",
+            "message": f"物品{data.operation.name}成功",
+            "character": {
+                "current_hp": character.current_hp,
+                "max_hp": character.max_hp,
+                "current_mp": character.current_mp,
+                "max_mp": character.max_mp,
+                "physical_attack": character.physical_attack,
+                "magic_attack": character.magic_attack,
+                "physical_defense": character.physical_defense,
+                "magic_defense": character.magic_defense
+            }
+        }
+        
+        # 如果是装备操作，返回装备信息
+        if data.operation in [ItemOperationType.EQUIP, ItemOperationType.UNEQUIP]:
+            equipped_items = {}
+            slot_map = {
+                ItemType.WEAPON: "weapon_id",
+                ItemType.HAT: "hat_id",
+                ItemType.CLOTH: "cloth_id",
+                ItemType.ORNAMENT: "ornament_id",
+                ItemType.PENDANT: "pendant_id",
+                ItemType.SHOES: "shoes_id"
+            }
+            
+            for item_type, field_name in slot_map.items():
+                inventory_id = getattr(equipment, field_name)
+                if inventory_id:
+                    inventory_item = db.query(Inventory).filter(
+                        Inventory.id == inventory_id,
+                        Inventory.is_deleted == 0
+                    ).first()
+                    if inventory_item:
+                        static_info = static_data.get_item_data(inventory_item.item_id)
+                        equipped_items[item_type.value] = {
+                            "inventory_id": inventory_id,
+                            "item_id": inventory_item.item_id,
+                            "name": static_info.get("name"),
+                            "quality": static_info.get("quality"),
+                            "attr": static_info.get("attr"),
+                            "strengthen_level": inventory_item.strengthen_level,
+                            "durability": inventory_item.durability
+                        }
+            
+            response_data["equipped_items"] = equipped_items
+        
+        return response_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"物品操作失败: {str(e)}")
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+
+# 内部软删除方法
+async def _soft_delete_record(
+    db: Session,
+    character_id: int,
+    user_id: int,
+    table_name: str,
+    record_id: int
+) -> Dict[str, Any]:
+    """
+    内部软删除方法
+    """
+    if table_name not in CHARACTER_RELATED_MODELS:
+        raise HTTPException(status_code=400, detail=f"不允许删除 {table_name} 表的记录")
+        
+    model_class = globals()[table_name]
+    if not issubclass(model_class, SoftDeleteMixin):
+        raise HTTPException(status_code=400, detail=f"表 {table_name} 不支持软删除")
+        
+    # 首先检查记录是否存在
+    record = db.query(model_class).filter(
+        model_class.id == record_id,
+        model_class.is_deleted == 0
+    ).first()
+    
+    if not record:
+        raise HTTPException(status_code=404, detail=f"记录不存在或已被删除")
+        
+    # 然后检查是否有权限删除
+    if hasattr(model_class, 'character_id'):
+        if record.character_id != character_id:
+            raise HTTPException(status_code=403, detail="无权删除此记录")
+    else:
+        raise HTTPException(status_code=400, detail=f"表 {table_name} 不支持用户删除")
+        
+    # 执行软删除
+    record.is_deleted = 1
+    record.deleted_at = datetime.utcnow()
+    record.deleted_by = user_id
+    
+    return {
+        "status": "success",
+        "message": "记录删除成功",
+        "table": table_name,
+        "record_id": record_id,
+        "deleted_at": record.deleted_at,
+        "deleted_by": record.deleted_by
+    }
+
+# 内部装备操作方法
+async def _operate_equipment(
+    db: Session,
+    character: Character,
+    inventory_item: Inventory,
+    item_static_data: Dict[str, Any],
+    operation: ItemOperationType,
+    equipment: CharacterEquipment
+) -> None:
+    """
+    内部装备操作方法
+    """
+    # 检查物品是否可以装备
+    if item_static_data.get("use", 0) != 1:
+        raise HTTPException(status_code=400, detail="该物品不可装备")
+        
+    # 检查物品类型
+    item_type = ItemType(item_static_data["type"])
+    if item_type not in [ItemType.WEAPON, ItemType.HAT, ItemType.CLOTH, 
+                       ItemType.ORNAMENT, ItemType.PENDANT, ItemType.SHOES]:
+        raise HTTPException(status_code=400, detail="该物品不是装备")
+        
+    # 槽位映射
+    slot_map = {
+        ItemType.WEAPON: "weapon_id",
+        ItemType.HAT: "hat_id",
+        ItemType.CLOTH: "cloth_id",
+        ItemType.ORNAMENT: "ornament_id",
+        ItemType.PENDANT: "pendant_id",
+        ItemType.SHOES: "shoes_id"
+    }
+    
+    slot_field = slot_map[item_type]
+    
+    if operation == ItemOperationType.EQUIP:
+        # 检查是否已装备
+        if inventory_item.equipped == 1:
+            raise HTTPException(status_code=400, detail="该物品已装备")
+            
+        # 如果该槽位已有装备，先卸下
+        current_equipped = getattr(equipment, slot_field)
+        if current_equipped:
+            current_item = db.query(Inventory).filter(
+                Inventory.id == current_equipped,
+                Inventory.is_deleted == 0
+            ).first()
+            if current_item:
+                current_item.equipped = 0
+                
+        # 装备新物品
+        setattr(equipment, slot_field, inventory_item.id)
+        inventory_item.equipped = 1
+        
+        # 应用装备属性
+        if "attr" in item_static_data:
+            for attr_str in item_static_data["attr"].split(","):
+                attr_type, value = map(int, attr_str.split("+"))
+                if attr_type == ItemAttributeType.PHYSICAL_ATTACK.value:
+                    character.physical_attack += value
+                elif attr_type == ItemAttributeType.MAGIC_ATTACK.value:
+                    character.magic_attack += value
+                elif attr_type == ItemAttributeType.PHYSICAL_DEFENSE.value:
+                    character.physical_defense += value
+                elif attr_type == ItemAttributeType.MAGIC_DEFENSE.value:
+                    character.magic_defense += value
+                    
+    else:  # UNEQUIP
+        # 检查物品是否已装备
+        if inventory_item.equipped != 1:
+            raise HTTPException(status_code=400, detail="该物品未装备")
+            
+        # 移除装备属性
+        if "attr" in item_static_data:
+            for attr_str in item_static_data["attr"].split(","):
+                attr_type, value = map(int, attr_str.split("+"))
+                if attr_type == ItemAttributeType.PHYSICAL_ATTACK.value:
+                    character.physical_attack -= value
+                elif attr_type == ItemAttributeType.MAGIC_ATTACK.value:
+                    character.magic_attack -= value
+                elif attr_type == ItemAttributeType.PHYSICAL_DEFENSE.value:
+                    character.physical_defense -= value
+                elif attr_type == ItemAttributeType.MAGIC_DEFENSE.value:
+                    character.magic_defense -= value
+        
+        # 卸下装备
+        setattr(equipment, slot_field, None)
+        inventory_item.equipped = 0
+
 # 注册路由
 app.include_router(crud_router)
 app.include_router(auth_router)

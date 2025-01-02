@@ -377,6 +377,42 @@ class FavorRecord(SoftDeleteMixin, Base):
         }
     )
 
+# 物品操作类型枚举
+class ItemOperationType(enum.Enum):
+    EQUIP = 0       # 装备
+    UNEQUIP = 1     # 卸下
+    USE = 2         # 使用
+    DISCARD = 3     # 丢弃
+
+# 物品类型枚举
+class ItemType(enum.Enum):
+    NONE = 0        # 无类型/测试物品
+    WEAPON = 1      # 武器
+    HAT = 2         # 帽子
+    CLOTH = 3       # 衣服
+    ORNAMENT = 4    # 饰品
+    PENDANT = 5     # 挂坠
+    SHOES = 6       # 鞋子
+    QUEST = 7       # 任务道具
+    POTION = 8      # 药品
+    FOOD = 9        # 食物
+    MATERIAL = 10   # 材料
+    MISC = 11       # 道具
+
+# 物品属性类型枚举
+class ItemAttributeType(enum.Enum):
+    # 装备属性
+    PHYSICAL_ATTACK = 1   # 物理攻击
+    MAGIC_ATTACK = 2      # 魔法攻击
+    PHYSICAL_DEFENSE = 3  # 物理防御
+    MAGIC_DEFENSE = 4     # 魔法防御
+    
+    # 消耗品属性
+    CURRENT_HP = 101      # 当前生命值
+    CURRENT_MP = 102      # 当前法力值
+    MAX_HP = 103         # 生命值上限
+    MAX_MP = 104         # 法力值上限
+
 # 确保导出这些类
 __all__ = [
     # 基础模型
@@ -397,7 +433,10 @@ __all__ = [
     'MailStatus',
     'QuestStatus',
     'QuestType',
-    'FavorTargetType'
+    'FavorTargetType',
+    'ItemOperationType',
+    'ItemType',
+    'ItemAttributeType'
 ]
 
 # 角色相关表列表

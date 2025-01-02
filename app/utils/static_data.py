@@ -20,7 +20,8 @@ class StaticDataManager:
     def __init__(self):
         self.static_path = os.path.join("app", "static")
         # 初始化时预加载所有JSON文件
-        self._load_all_json_files()
+        if not self._data_cache:  # 只在第一次初始化时加载
+            self._load_all_json_files()
         
     def _load_all_json_files(self):
         """加载static目录下的所有JSON文件"""
@@ -81,7 +82,14 @@ class StaticDataManager:
         :param key: 可选的键名，如果提供则返回对应的值
         :return: 请求的数据
         """
-        data = self._load_json_file(file_name)
+        # 如果数据不在缓存中，加载文件
+        if file_name not in self._data_cache:
+            self._load_json_file(file_name)
+        # 如果文件被修改，重新加载
+        elif self._should_reload(os.path.join(self.static_path, file_name), file_name):
+            self._load_json_file(file_name)
+            
+        data = self._data_cache.get(file_name, {})
         if key is not None:
             return data.get(str(key))
         return data
