@@ -37,6 +37,87 @@ from app.crud.base import CRUDRegister
 from app.auth.token import create_token, verify_token, invalidate_token
 from pydantic import BaseModel
 
+# 在导入部分之后，添加错误码和返回格式类定义
+
+# 统一错误码
+class ResponseCode(int, Enum):
+    SUCCESS = 200  # 成功
+    PARAM_ERROR = 400  # 参数错误
+    UNAUTHORIZED = 401  # 未授权
+    FORBIDDEN = 403  # 禁止访问
+    NOT_FOUND = 404  # 资源未找在
+    CONFLICT = 409  # 资源冲突
+    SYSTEM_ERROR = 500  # 系统错误
+    
+    # 账号相关错误码 (1000-1999)
+    ACCOUNT_NOT_FOUND = 1001  # 账号不存在
+    ACCOUNT_DISABLED = 1002  # 账号已禁用
+    PASSWORD_ERROR = 1003  # 密码错误
+    TOKEN_INVALID = 1004  # Token无效
+    TOKEN_EXPIRED = 1005  # Token已过期
+    DEVICE_NOT_MATCH = 1006  # 设备不匹配
+    
+    # 角色相关错误码 (2000-2999)
+    CHARACTER_NOT_FOUND = 2001  # 角色不存在
+    CHARACTER_DELETED = 2002  # 角色已删除
+    CHARACTER_MAX_LIMIT = 2003  # 角色数量达到上限
+    CHARACTER_NAME_EXISTS = 2004  # 角色名已存在
+    CHARACTER_LEVEL_LIMIT = 2005  # 角色等级不足
+    
+    # 物品相关错误码 (3000-3999)
+    ITEM_NOT_FOUND = 3001  # 物品不存在
+    ITEM_NOT_ENOUGH = 3002  # 物品数量不足
+    ITEM_EQUIPPED = 3003  # 物品已装备
+    ITEM_NOT_EQUIPPED = 3004  # 物品未装备
+    ITEM_NOT_USABLE = 3005  # 物品不可使用
+    ITEM_BIND_STATUS = 3006  # 物品绑定状态不符
+    
+    # 邮件相关错误码 (4000-4999)
+    MAIL_NOT_FOUND = 4001  # 邮件不存在
+    MAIL_EXPIRED = 4002  # 邮件已过期
+    MAIL_NO_ATTACHMENT = 4003  # 邮件无附件
+    MAIL_CLAIMED = 4004  # 附件已领取
+    MAIL_DELETED = 4005  # 邮件已删除
+    MAIL_SEND_FAILED = 4006  # 邮件发送失败
+
+# 统一返回格式
+class ResponseModel(BaseModel):
+    code: int  # 错误码
+    message: str  # 错误信息
+    data: Optional[Any] = None  # 返回数据
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "code": 200,
+                "message": "SUCCESS",
+                "data": {
+                    "id": 1,
+                    "name": "示例数据"
+                }
+            }
+        }
+
+# 统一返回方法
+def response(*, code: Union[int, ResponseCode] = ResponseCode.SUCCESS, 
+            message: str = "SUCCESS",
+            data: Any = None) -> Dict[str, Any]:
+    """
+    统一返回方法
+    
+    参数：
+        code: 错误码，默认为200（成功）
+        message: 错误信息，默认为"SUCCESS"
+        data: 返回数据，默认为None
+    
+    返回统一格式的响应数据
+    """
+    return {
+        "code": code if isinstance(code, int) else code.value,
+        "message": message.upper() if message else "SUCCESS",
+        "data": data
+    }
+
 # 修改日志配置
 logging.basicConfig(
     level=logging.DEBUG,
@@ -1765,18 +1846,59 @@ class MailOperationRequest(BaseModel):
     description="""
     发送邮件给指定角色或所有角色，可以包含附件。
     
-    - title: 邮件标题
-    - content: 邮件内容
-    - character_ids: 接收者角色ID列表或"all"（发送给所有角色）
-    - sender_type: 发送者类型
-      - system: 系统发送（此类型时不需要sender_id，默认为"系统"）
-      - character: 角色发送（sender_id必须为有效的角色ID）
-      - custom: 自定义发送者（sender_id为任意字符串）
-    - sender_id: 发送者ID（system类型时可省略）
-    - attachments: 附件列表（可选）[{item_id: 物品ID, quantity: 数量}, ...]
-    - expire_days: 过期天数（可选，默认7天）
+    权限要求：
+    - 需要有效的用户Token
+    - 需要有效的角色信息
     
-    示例请求：
+    请求参数：
+    - title: 邮件标题
+      - 类型：string
+      - 必填：是
+      - 长度：1-50个字符
+      
+    - content: 邮件内容
+      - 类型：string
+      - 必填：是
+      - 长度：1-1000个字符
+      
+    - character_ids: 接收者角色ID列表或"all"
+      - 类型：array[integer] 或 string
+      - 必填：是
+      - 说明：当为"all"时发送给所有角色，当为数组时发送给指定角色
+      
+    - sender_type: 发送者类型
+      - 类型：string
+      - 必填：是
+      - 取值：
+        - system: 系统发送（此类型时不需要sender_id，默认为"系统"）
+        - character: 角色发送（sender_id必须为有效的角色ID）
+        - custom: 自定义发送者（sender_id为任意字符串）
+      
+    - sender_id: 发送者ID
+      - 类型：integer 或 string
+      - 必填：否（system类型时不需要）
+      - 说明：根据sender_type不同有不同要求
+      
+    - attachments: 附件列表
+      - 类型：array[object]
+      - 必填：否
+      - 格式：[{item_id: 物品ID, quantity: 数量}, ...]
+      - 说明：每个附件需要指定物品ID和数量
+      
+    - expire_days: 过期天数
+      - 类型：integer
+      - 必填：否
+      - 默认值：7
+      - 说明：邮件的有效期天数
+    
+    可能的错误码：
+    - 400: 参数错误
+    - 401: Token无效
+    - 404: 角色不存在
+    - 3001: 物品不存在
+    - 4006: 邮件发送失败
+    
+    请求示例：
     1. 系统发送给所有角色
     ```json
     {
@@ -1817,6 +1939,34 @@ class MailOperationRequest(BaseModel):
         ]
     }
     ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "recipients_count": 2,
+            "mail_ids": [1001, 1002]
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 3001,
+        "message": "ITEM_NOT_FOUND",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 发送给所有角色时，只会发送给未删除的角色
+    2. 附件中的物品必须是有效的物品ID
+    3. 物品数量必须大于0
+    4. 邮件发送后不能撤回
+    5. 邮件会在过期时间后自动删除
     """
 )
 async def send_mail(
@@ -1836,31 +1986,22 @@ async def send_mail(
             sender_id = 0
         elif data.sender_type == SenderType.CHARACTER:
             if not isinstance(data.sender_id, int):
-                raise HTTPException(status_code=400, detail="角色发送者ID必须为数字")
+                return response(code=ResponseCode.PARAM_ERROR, 
+                              message="INVALID_SENDER_ID_TYPE")
             # 验证角色是否存在
             sender = db.query(Character).filter(
                 Character.id == data.sender_id,
                 Character.is_deleted == 0
             ).first()
             if not sender:
-                raise HTTPException(status_code=404, detail="未找到发送者角色信息")
+                return response(code=ResponseCode.CHARACTER_NOT_FOUND, 
+                              message="CHARACTER_NOT_FOUND")
             sender_name = sender.name
             sender_id = data.sender_id
-        # elif data.sender_type == SenderType.NPC:  # 暂时屏蔽NPC相关逻辑
-        #     if not isinstance(data.sender_id, int):
-        #         raise HTTPException(status_code=400, detail="NPC发送者ID必须为数字")
-        #     # 验证NPC是否存在
-        #     npc = db.query(NPC).filter(
-        #         NPC.id == data.sender_id,
-        #         NPC.is_deleted == 0
-        #     ).first()
-        #     if not npc:
-        #         raise HTTPException(status_code=404, detail="未找到发送者NPC信息")
-        #     sender_name = npc.name
-        #     sender_id = data.sender_id
         else:  # CUSTOM
             if not data.sender_id:
-                raise HTTPException(status_code=400, detail="自定义发送者必须提供sender_id")
+                return response(code=ResponseCode.PARAM_ERROR, 
+                              message="MISSING_SENDER_ID")
             sender_name = str(data.sender_id)
             sender_id = 0
             
@@ -1878,18 +2019,22 @@ async def send_mail(
             ).all()
         
         if not recipients:
-            raise HTTPException(status_code=404, detail="未找到有效的接收者")
+            return response(code=ResponseCode.CHARACTER_NOT_FOUND, 
+                          message="NO_VALID_RECIPIENTS")
             
         # 如果有附件，验证物品是否存在
         if data.attachments:
             for attachment in data.attachments:
                 item_data = static_data.get_item_data(attachment["item_id"])
                 if not item_data:
-                    raise HTTPException(status_code=400, detail=f"物品ID {attachment['item_id']} 不存在")
+                    return response(code=ResponseCode.ITEM_NOT_FOUND, 
+                                  message=f"ITEM_NOT_FOUND: {attachment['item_id']}")
                 if attachment["quantity"] <= 0:
-                    raise HTTPException(status_code=400, detail="物品数量必须大于0")
+                    return response(code=ResponseCode.PARAM_ERROR, 
+                                  message="INVALID_ITEM_QUANTITY")
         
         # 创建邮件
+        mail_ids = []
         for recipient in recipients:
             mail = Mail(
                 character_id=recipient.id,
@@ -1904,36 +2049,60 @@ async def send_mail(
                 expire_time=datetime.utcnow() + timedelta(days=data.expire_days)
             )
             db.add(mail)
+            db.flush()  # 获取自增ID
+            mail_ids.append(mail.id)
         
         db.commit()
         
-        return {
-            "status": "success",
-            "message": f"邮件发送成功，共发送给 {len(recipients)} 个角色"
-        }
+        return response(data={
+            "recipients_count": len(recipients),
+            "mail_ids": mail_ids
+        })
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"发送邮件失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(code=ResponseCode.MAIL_SEND_FAILED, 
+                      message="MAIL_SEND_FAILED")
 
 @character_router.post("/mail/operate",
     summary="邮件操作",
     description="""
     对邮件进行操作，包括领取附件和删除邮件。
     
-    操作类型：
-    - claim: 领取附件
-    - delete: 删除邮件
+    权限要求：
+    - 需要有效的用户Token
+    - 需要有效的角色信息
     
-    示例请求：
+    请求参数：
+    - operation: 操作类型
+      - 类型：string
+      - 必填：是
+      - 取值：
+        - claim: 领取附件
+        - delete: 删除邮件
+      
+    - mail_id: 邮件ID
+      - 类型：integer
+      - 必填：是
+      - 说明：要操作的邮件ID
+    
+    可能的错误码：
+    - 400: 参数错误
+    - 401: Token无效
+    - 404: 邮件不存在
+    - 4002: 邮件已过期
+    - 4003: 邮件无附件
+    - 4004: 附件已领取
+    - 4005: 邮件已删除
+    - 4007: 邮件未领取不能删除
+    
+    请求示例：
     1. 领取附件
     ```json
     {
         "operation": "claim",
-        "mail_id": 1
+        "mail_id": 1001
     }
     ```
     
@@ -1941,9 +2110,42 @@ async def send_mail(
     ```json
     {
         "operation": "delete",
-        "mail_id": 1
+        "mail_id": 1001
     }
     ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "operation": "claim",
+            "items": [
+                {
+                    "item_id": 1001,
+                    "quantity": 1
+                }
+            ]
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 4007,
+        "message": "UNCLAIMED_MAIL_CANNOT_DELETE",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 领取附件后邮件状态会变更为已领取
+    2. 删除邮件后不能恢复
+    3. 已过期的邮件不能进行任何操作
+    4. 领取附件时会自动添加到角色背包
+    5. 有附件的邮件必须先领取附件才能删除
     """
 )
 async def operate_mail(
@@ -1966,7 +2168,8 @@ async def operate_mail(
         ).first()
         
         if not character:
-            raise HTTPException(status_code=404, detail="未找到角色信息")
+            return response(code=ResponseCode.CHARACTER_NOT_FOUND, 
+                          message="CHARACTER_NOT_FOUND")
             
         # 获取邮件信息
         mail = db.query(Mail).filter(
@@ -1976,28 +2179,34 @@ async def operate_mail(
         ).first()
         
         if not mail:
-            raise HTTPException(status_code=404, detail="未找到指定邮件")
+            return response(code=ResponseCode.MAIL_NOT_FOUND, 
+                          message="MAIL_NOT_FOUND")
             
         # 检查邮件是否已过期
         if mail.expire_time and mail.expire_time < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="邮件已过期")
+            return response(code=ResponseCode.MAIL_EXPIRED, 
+                          message="MAIL_EXPIRED")
             
         if data.operation == MailOperationType.CLAIM:
             # 检查是否有附件
             if not mail.has_attachment:
-                raise HTTPException(status_code=400, detail="该邮件没有附件")
+                return response(code=ResponseCode.MAIL_NO_ATTACHMENT, 
+                              message="MAIL_NO_ATTACHMENT")
                 
             # 检查是否已领取
             if mail.status == MailStatus.CLAIMED:
-                raise HTTPException(status_code=400, detail="附件已领取")
+                return response(code=ResponseCode.MAIL_CLAIMED, 
+                              message="MAIL_CLAIMED")
                 
             # 领取附件
+            claimed_items = []
             if mail.attachments:
                 for attachment in mail.attachments:
                     # 验证物品是否存在
                     item_data = static_data.get_item_data(attachment["item_id"])
                     if not item_data:
-                        raise HTTPException(status_code=400, detail=f"物品ID {attachment['item_id']} 不存在")
+                        return response(code=ResponseCode.ITEM_NOT_FOUND, 
+                                      message=f"ITEM_NOT_FOUND: {attachment['item_id']}")
                         
                     # 查找是否已有该物品
                     existing_item = db.query(Inventory).filter(
@@ -2022,29 +2231,41 @@ async def operate_mail(
                             bag_type=1
                         )
                         db.add(new_item)
+                    
+                    claimed_items.append({
+                        "item_id": attachment["item_id"],
+                        "quantity": attachment["quantity"]
+                    })
                         
             # 更新邮件状态
             mail.status = MailStatus.CLAIMED
             mail.claim_time = datetime.utcnow()
             
+            db.commit()
+            
+            return response(data={
+                "operation": data.operation,
+                "items": claimed_items
+            })
+            
         else:  # DELETE
+            # 检查是否有未领取的附件
+            if mail.has_attachment and mail.status != MailStatus.CLAIMED:
+                return response(code=ResponseCode.PARAM_ERROR,
+                              message="UNCLAIMED_MAIL_CANNOT_DELETE")
+            
             # 执行软删除
             await _soft_delete_record(db, character.id, current_user.id, "Mail", mail.id)
             
-        db.commit()
+            return response(data={
+                "operation": data.operation
+            })
         
-        return {
-            "status": "success",
-            "message": "操作成功",
-            "operation": data.operation
-        }
-        
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"邮件操作失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(code=ResponseCode.SYSTEM_ERROR, 
+                      message="SYSTEM_ERROR")
 
 # 注册路由
 app.include_router(crud_router)
