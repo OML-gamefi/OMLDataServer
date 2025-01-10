@@ -14,6 +14,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from enum import Enum
 from app.utils.static_data import static_data
+from app.utils.response import response, ResponseCode
+import jwt
+from app.auth.token import SECRET_KEY, ALGORITHM
 
 # 导入配置
 logger = logging.getLogger(__name__)
@@ -36,87 +39,6 @@ from app.utils.ai_service import ai_service, ChatRequest, ChatResponse
 from app.crud.base import CRUDRegister
 from app.auth.token import create_token, verify_token, invalidate_token
 from pydantic import BaseModel
-
-# 在导入部分之后，添加错误码和返回格式类定义
-
-# 统一错误码
-class ResponseCode(int, Enum):
-    SUCCESS = 200  # 成功
-    PARAM_ERROR = 400  # 参数错误
-    UNAUTHORIZED = 401  # 未授权
-    FORBIDDEN = 403  # 禁止访问
-    NOT_FOUND = 404  # 资源未找在
-    CONFLICT = 409  # 资源冲突
-    SYSTEM_ERROR = 500  # 系统错误
-    
-    # 账号相关错误码 (1000-1999)
-    ACCOUNT_NOT_FOUND = 1001  # 账号不存在
-    ACCOUNT_DISABLED = 1002  # 账号已禁用
-    PASSWORD_ERROR = 1003  # 密码错误
-    TOKEN_INVALID = 1004  # Token无效
-    TOKEN_EXPIRED = 1005  # Token已过期
-    DEVICE_NOT_MATCH = 1006  # 设备不匹配
-    
-    # 角色相关错误码 (2000-2999)
-    CHARACTER_NOT_FOUND = 2001  # 角色不存在
-    CHARACTER_DELETED = 2002  # 角色已删除
-    CHARACTER_MAX_LIMIT = 2003  # 角色数量达到上限
-    CHARACTER_NAME_EXISTS = 2004  # 角色名已存在
-    CHARACTER_LEVEL_LIMIT = 2005  # 角色等级不足
-    
-    # 物品相关错误码 (3000-3999)
-    ITEM_NOT_FOUND = 3001  # 物品不存在
-    ITEM_NOT_ENOUGH = 3002  # 物品数量不足
-    ITEM_EQUIPPED = 3003  # 物品已装备
-    ITEM_NOT_EQUIPPED = 3004  # 物品未装备
-    ITEM_NOT_USABLE = 3005  # 物品不可使用
-    ITEM_BIND_STATUS = 3006  # 物品绑定状态不符
-    
-    # 邮件相关错误码 (4000-4999)
-    MAIL_NOT_FOUND = 4001  # 邮件不存在
-    MAIL_EXPIRED = 4002  # 邮件已过期
-    MAIL_NO_ATTACHMENT = 4003  # 邮件无附件
-    MAIL_CLAIMED = 4004  # 附件已领取
-    MAIL_DELETED = 4005  # 邮件已删除
-    MAIL_SEND_FAILED = 4006  # 邮件发送失败
-
-# 统一返回格式
-class ResponseModel(BaseModel):
-    code: int  # 错误码
-    message: str  # 错误信息
-    data: Optional[Any] = None  # 返回数据
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "code": 200,
-                "message": "SUCCESS",
-                "data": {
-                    "id": 1,
-                    "name": "示例数据"
-                }
-            }
-        }
-
-# 统一返回方法
-def response(*, code: Union[int, ResponseCode] = ResponseCode.SUCCESS, 
-            message: str = "SUCCESS",
-            data: Any = None) -> Dict[str, Any]:
-    """
-    统一返回方法
-    
-    参数：
-        code: 错误码，默认为200（成功）
-        message: 错误信息，默认为"SUCCESS"
-        data: 返回数据，默认为None
-    
-    返回统一格式的响应数据
-    """
-    return {
-        "code": code if isinstance(code, int) else code.value,
-        "message": message.upper() if message else "SUCCESS",
-        "data": data
-    }
 
 # 修改日志配置
 logging.basicConfig(
@@ -493,7 +415,81 @@ async def delete_item(
         )
 
 # 认证路由
-@auth_router.post("/login")
+@auth_router.post("/login",
+    summary="用户登录",
+    description="""
+    用户登录接口，支持账号密码登录。
+    
+    权限要求：
+    - 无需Token
+    
+    请求参数：
+    - username: 用户名
+      - 类型：string
+      - 必填：是
+      - 长度：1-50个字符
+      
+    - password: 密码
+      - 类型：string
+      - 必填：是
+      - 长度：6-20个字符
+      
+    - device_name: 设备名称
+      - 类型：string
+      - 必填：是
+      - 说明：用于标识登录设备，如"iPhone 12"、"Chrome浏览器"等
+      
+    - device_id: 设备ID
+      - 类型：string
+      - 必填：是
+      - 说明：设备的唯一标识符
+    
+    可能的错误码：
+    - 1001: 账号不存在
+    - 1002: 账号已禁用
+    - 1003: 密码错误
+    - 1007: 登录失败（其他原因）
+    
+    请求示例：
+    ```json
+    {
+        "username": "test_user",
+        "password": "password123",
+        "device_name": "Chrome Browser",
+        "device_id": "browser-uuid-123"
+    }
+    ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+            "account_id": 1001,
+            "username": "test_user",
+            "has_character": true
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 1003,
+        "message": "PASSWORD_ERROR",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 同一账号可以在多个设备上登录
+    2. 每次登录都会生成新的token
+    3. token有效期为7天
+    4. 返回的has_character字段表示该账号是否已创建游戏角色
+    """
+)
 async def login(
     request: Request,
     login_data: LoginRequest,
@@ -508,32 +504,44 @@ async def login(
         logger.debug(f"Body: {body.decode()}")
         logger.debug(f"处理后的请求数据: {login_data.dict()}")
         
+        # 验证设备信息
+        if not login_data.device_id or not login_data.device_name:
+            return response(
+                code=ResponseCode.INVALID_DEVICE_DATA,
+                message="INVALID_DEVICE_DATA"
+            )
+        
         # 查找用户账号
         account = db.query(Account).filter(Account.username == login_data.username).first()
         if not account:
             logger.error(f"用户不存在: {login_data.username}")
-            raise HTTPException(status_code=401, detail="用户名或密码错误")
+            return response(
+                code=ResponseCode.ACCOUNT_NOT_FOUND,
+                message="ACCOUNT_NOT_FOUND"
+            )
             
         # 检查账号状态
         if account.is_deleted:
             logger.error(f"已删除的账号尝试登录: {login_data.username}")
-            raise HTTPException(status_code=403, detail="账号已被删除")
+            return response(
+                code=ResponseCode.ACCOUNT_DISABLED,
+                message="ACCOUNT_DELETED"
+            )
             
         if account.status == 2:  # 已封禁
             logger.error(f"被封禁的账号尝试登录: {login_data.username}")
-            raise HTTPException(
-                status_code=403, 
-                detail="账号已被封禁，如有疑问请联系我们"
+            return response(
+                code=ResponseCode.ACCOUNT_DISABLED,
+                message="ACCOUNT_BANNED"
             )
-            
-        # if account.status == 0:  # 未激活
-        #     logger.error(f"未激活的账号尝试登录: {login_data.username}")
-        #     raise HTTPException(status_code=403, detail="账号未激活，请先激活账号")
             
         # 验证密码
         if not verify_password(login_data.password, account.password):
             logger.error(f"密码错误: username={login_data.username}")
-            raise HTTPException(status_code=401, detail="用户名或密码错误")
+            return response(
+                code=ResponseCode.PASSWORD_ERROR,
+                message="PASSWORD_ERROR"
+            )
             
         logger.debug(f"用户验证成功: {account.username} (ID: {account.id})")
         
@@ -546,29 +554,97 @@ async def login(
         
         # 创建token
         token = create_token(db, account.id, login_data.device_name, login_data.device_id)
+        if not token:
+            return response(
+                code=ResponseCode.LOGIN_FAILED,
+                message="TOKEN_CREATE_FAILED"
+            )
+            
         logger.debug(f"创建token成功: {token[:10]}...")
         
         # 更新最后登录时间
         account.last_login_at = datetime.now()
         db.commit()
         
-        response_data = {
+        return response(data={
             "token": token,
             "account_id": account.id,
             "username": account.username,
             "has_character": has_character
-        }
-        logger.debug(f"登录成功，返回数据: {response_data}")
-        return response_data
+        })
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"登录过程发生异常: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(
+            code=ResponseCode.LOGIN_FAILED,
+            message="LOGIN_FAILED"
+        )
 
-@auth_router.post("/logout")
+@auth_router.post("/logout",
+    summary="用户登出",
+    description="""
+    用户登出接口，使当前设备的token失效。
+    
+    权限要求：
+    - 需要有效的Token
+    
+    请求参数：
+    - token: 当前会话的token
+      - 类型：string
+      - 必填：是
+      
+    - device_name: 设备名称
+      - 类型：string
+      - 必填：是
+      - 说明：登录时使用的设备名称
+      
+    - device_id: 设备ID
+      - 类型：string
+      - 必填：是
+      - 说明：登录时使用的设备ID
+    
+    可能的错误码：
+    - 1004: Token无效
+    - 1006: 设备不匹配
+    - 1008: 登出失败
+    
+    请求示例：
+    ```json
+    {
+        "token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+        "device_name": "Chrome Browser",
+        "device_id": "browser-uuid-123"
+    }
+    ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "status": "success",
+            "message": "Logged out successfully"
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 1004,
+        "message": "TOKEN_INVALID",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 登出后token将立即失效
+    2. 只会使当前设备的token失效，不影响其他设备的登录状态
+    3. 重复登出无害，会返回成功
+    """
+)
 async def logout(
     request: Request,
     logout_data: LogoutRequest,
@@ -581,16 +657,48 @@ async def logout(
         logger.debug(f"Headers: {dict(request.headers)}")
         logger.debug(f"Body: {body.decode()}")
         
+        # 验证设备信息
+        if not logout_data.device_id or not logout_data.device_name:
+            return response(
+                code=ResponseCode.INVALID_DEVICE_DATA,
+                message="INVALID_DEVICE_DATA"
+            )
+            
+        # 验证token和设备是否匹配
+        token_record = db.query(UserToken).filter(
+            UserToken.token == logout_data.token,
+            UserToken.device_id == logout_data.device_id,
+            UserToken.device_name == logout_data.device_name,
+            UserToken.expired == 0
+        ).first()
+        
+        if not token_record:
+            return response(
+                code=ResponseCode.DEVICE_NOT_MATCH,
+                message="DEVICE_NOT_MATCH"
+            )
+        
+        # 使token失效
         if invalidate_token(db, logout_data.token):
             logger.debug(f"登出成功: token={logout_data.token[:10]}...")
-            return {"status": "success", "message": "Logged out successfully"}
+            return response(data={
+                "status": "success",
+                "message": "Logged out successfully"
+            })
         
         logger.error(f"登出失败，无效token: {logout_data.token[:10]}...")
-        raise HTTPException(status_code=401, detail="Invalid token")
+        return response(
+            code=ResponseCode.TOKEN_INVALID,
+            message="TOKEN_INVALID"
+        )
+        
     except Exception as e:
         logger.error(f"登出过程发生异常: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise
+        return response(
+            code=ResponseCode.LOGOUT_FAILED,
+            message="LOGOUT_FAILED"
+        )
 
 # 创建公共请求头模型
 class CommonHeaders:
@@ -618,33 +726,107 @@ async def get_current_user(
         logger.debug(f"Headers: {dict(request.headers)}")
         logger.debug(f"Service Code: {commons.service_code}")
         
-        # 验证token
-        account_id = verify_token(db, commons.token)
-        if not account_id:
-            logger.error(f"无效或过期的token: {commons.token[:10]}...")
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        # 验证设备信息
+        if not commons.device_id or not commons.device_name:
+            raise HTTPException(
+                status_code=400,
+                detail=response(
+                    code=ResponseCode.INVALID_DEVICE_DATA,
+                    message="INVALID_DEVICE_DATA"
+                )
+            )
         
-        logger.debug(f"Token验证成功: account_id={account_id}")
-        
-        # 验证设备
+        # 验证token是否存在且未过期
         token_record = db.query(UserToken).filter(
             UserToken.token == commons.token,
-            UserToken.device_id == commons.device_id,
             UserToken.device_name == commons.device_name,
-            UserToken.expired == 0
+            UserToken.device_id == commons.device_id,
+            UserToken.expired == False
         ).first()
         
         if not token_record:
-            logger.error(f"设备验证失败: device_name={commons.device_name}, device_id={commons.device_id}")
-            raise HTTPException(status_code=401, detail="Invalid device or device name")
-        
-        logger.debug(f"设备验证成功: {token_record.device_name} ({token_record.device_id})")
-        
-        # 获取账号信息
+            raise HTTPException(
+                status_code=401,
+                detail=response(
+                    code=ResponseCode.DEVICE_NOT_MATCH,
+                    message="DEVICE_NOT_MATCH"
+                )
+            )
+            
+        # 验证JWT
+        try:
+            payload = jwt.decode(commons.token, SECRET_KEY, algorithms=[ALGORITHM])
+            account_id = int(payload.get("sub"))  # 确保转换为整数
+            if account_id is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail=response(
+                        code=ResponseCode.TOKEN_INVALID,
+                        message="TOKEN_INVALID"
+                    )
+                )
+        except jwt.ExpiredSignatureError:
+            # 令牌过期，标记为已过期
+            token_record.expired = True
+            db.commit()
+            raise HTTPException(
+                status_code=401,
+                detail=response(
+                    code=ResponseCode.TOKEN_EXPIRED,
+                    message="TOKEN_EXPIRED"
+                )
+            )
+        except jwt.PyJWTError:  # 修改这里，使用 PyJWTError 替代 JWTError
+            raise HTTPException(
+                status_code=401,
+                detail=response(
+                    code=ResponseCode.TOKEN_INVALID,
+                    message="TOKEN_INVALID"
+                )
+            )
+            
+        # 获取用户
         account = db.query(Account).filter(Account.id == account_id).first()
         if not account:
-            logger.error(f"账号不存在: account_id={account_id}")
-            raise HTTPException(status_code=404, detail="Account not found")
+            raise HTTPException(
+                status_code=404,
+                detail=response(
+                    code=ResponseCode.ACCOUNT_NOT_FOUND,
+                    message="ACCOUNT_NOT_FOUND"
+                )
+            )
+            
+        # 检查账号状态
+        if account.is_deleted:
+            raise HTTPException(
+                status_code=403,
+                detail=response(
+                    code=ResponseCode.ACCOUNT_DISABLED,
+                    message="ACCOUNT_DELETED"
+                )
+            )
+            
+        if account.status == 2:  # 已封禁
+            raise HTTPException(
+                status_code=403,
+                detail=response(
+                    code=ResponseCode.ACCOUNT_DISABLED,
+                    message="ACCOUNT_BANNED"
+                )
+            )
+            
+        if account.status == 0:  # 未激活
+            raise HTTPException(
+                status_code=403,
+                detail=response(
+                    code=ResponseCode.ACCOUNT_DISABLED,
+                    message="ACCOUNT_NOT_ACTIVATED"
+                )
+            )
+            
+        # 更新最后活跃时间
+        token_record.last_active = datetime.utcnow()
+        db.commit()
         
         logger.debug(f"获取账号成功: {account.username} (ID: {account.id})")
         return account
@@ -652,9 +834,15 @@ async def get_current_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"用户验证过程发生异常: {str(e)}")
+        logger.error(f"获取当前用户时发生异常: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(
+            status_code=500,
+            detail=response(
+                code=ResponseCode.SYSTEM_ERROR,
+                message="SYSTEM_ERROR"
+            )
+        )
 
 # 添加 datetime 序列化处理函数
 def datetime_handler(obj):
@@ -663,7 +851,105 @@ def datetime_handler(obj):
     raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
 
 # 用户路由
-@user_router.get("/me")
+@user_router.get("/me",
+    summary="获取当前用户信息",
+    description="""
+    获取当前登录用户的详细信息，包括账号信息和当前角色信息。
+    
+    权限要求：
+    - 需要有效的Token
+    
+    返回数据：
+    - id: 用户ID
+      - 类型：integer
+      - 说明：用户的唯一标识符
+      
+    - username: 用户名
+      - 类型：string
+      - 说明：用户的登录名
+      
+    - wallet_address: 钱包地址
+      - 类型：string
+      - 说明：用户绑定的钱包地址
+      - 可能为null
+      
+    - status: 账号状态
+      - 类型：integer
+      - 说明：0-未激活，1-正常，2-已封禁
+      
+    - email: 邮箱
+      - 类型：string
+      - 说明：用户的邮箱地址
+      - 可能为null
+      
+    - role: 用户角色
+      - 类型：string
+      - 说明：user-普通用户，admin-管理员
+      
+    - avatar_url: 头像URL
+      - 类型：string
+      - 说明：用户头像的URL地址
+      - 可能为null
+      
+    - oml_coin: OML币数量
+      - 类型：integer
+      - 说明：用户拥有的OML币数量
+      
+    - user_setting: 用户设置
+      - 类型：string
+      - 说明：用户的个性化设置
+      - 可能为null
+      
+    - character: 当前角色信息
+      - 类型：object
+      - 说明：用户当前的游戏角色信息
+      - 可能为null
+    
+    可能的错误码：
+    - 401: Token无效
+    - 404: 用户不存在
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "id": 1001,
+            "username": "test_user",
+            "wallet_address": "0x123...",
+            "status": 1,
+            "email": "test@example.com",
+            "role": "user",
+            "avatar_url": "https://...",
+            "oml_coin": 100,
+            "user_setting": "{...}",
+            "character": {
+                "id": 1,
+                "name": "角色名",
+                "race": 1,
+                "level": 1,
+                ...
+            }
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 401,
+        "message": "TOKEN_INVALID",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. character字段可能为null（用户未创建角色时）
+    2. 某些字段可能为null（用户未设置时）
+    3. 返回的角色信息为当前未删除的角色
+    """
+)
 async def read_me(
     request: Request,
     commons: CommonHeaders = Depends(),
@@ -681,6 +967,12 @@ async def read_me(
             Character.is_deleted == 0
         ).first()
         
+        if not current_character:
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="CHARACTER_NOT_FOUND"
+            )
+        
         response_data = {
             "id": current_user.id,
             "username": current_user.username,
@@ -696,13 +988,118 @@ async def read_me(
         }
         
         logger.debug(f"获取用户信息成功: {json.dumps(response_data, ensure_ascii=False, default=datetime_handler)}")
-        return response_data
+        return response(data=response_data)
+        
     except Exception as e:
         logger.error(f"获取用户信息失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
-@user_router.get("/characters")
+@user_router.get("/characters",
+    summary="获取用户角色列表",
+    description="""
+    获取当前用户的所有游戏角色列表。
+    
+    权限要求：
+    - 需要有效的Token
+    
+    返回数据：
+    角色列表，每个角色包含以下信息：
+    - id: 角色ID
+      - 类型：integer
+      - 说明：角色的唯一标识符
+      
+    - name: 角色名称
+      - 类型：string
+      - 说明：角色的名称
+      
+    - race: 种族
+      - 类型：integer
+      - 说明：1-人族，2-妖族，3-鬼族，4-仙族
+      
+    - level: 等级
+      - 类型：integer
+      - 说明：角色当前等级
+      
+    - exp: 经验值
+      - 类型：integer
+      - 说明：当前经验值
+      
+    - max_exp: 升级所需经验
+      - 类型：integer
+      - 说明：升到下一级所需的经验值
+      
+    - sect_name: 宗门名称
+      - 类型：string
+      - 说明：所属宗门名称
+      - 可能为null
+      
+    - current_location: 当前位置
+      - 类型：string
+      - 说明：角色当前所在位置
+    
+    可能的错误码：
+    - 401: Token无效
+    - 404: 用户不存在
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": [
+            {
+                "id": 1,
+                "name": "角色1",
+                "race": 1,
+                "level": 10,
+                "exp": 1000,
+                "max_exp": 2000,
+                "sect_name": "青云门",
+                "current_location": "青云山",
+                "max_hp": 1000,
+                "current_hp": 1000,
+                "max_mp": 500,
+                "current_mp": 500,
+                "physical_attack": 100,
+                "magic_attack": 80,
+                "physical_defense": 50,
+                "magic_defense": 40,
+                "speed": 10,
+                "critical_rate": 0.05,
+                "critical_damage": 1.5,
+                "hit_rate": 0.95,
+                "dodge_rate": 0.05,
+                "morality": 0,
+                "max_stamina": 100,
+                "current_stamina": 100,
+                "copper_coins": 1000,
+                "created_at": "2024-01-01T00:00:00",
+                "last_login": "2024-01-02T00:00:00",
+                "last_logout": "2024-01-02T01:00:00"
+            }
+        ]
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 401,
+        "message": "TOKEN_INVALID",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 只返回未删除的角色
+    2. 目前系统限制每个账号只能创建一个角色
+    3. 返回的列表可能为空（未创建角色时）
+    """
+)
 async def read_user_characters(
     request: Request,
     commons: CommonHeaders = Depends(),
@@ -720,17 +1117,93 @@ async def read_user_characters(
             Character.is_deleted == 0
         ).first()
         
+        if not character:
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="CHARACTER_NOT_FOUND"
+            )
+            
         char_list = [format_character_data(character)] if character else []
             
         logger.debug(f"角色列表: {json.dumps(char_list, ensure_ascii=False)}")
-        return char_list
+        return response(data=char_list)
+        
     except Exception as e:
         logger.error(f"获取用户角色列表失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
-# 修改为GET方法，使用header数
-@user_router.get("/devices")
+@user_router.get("/devices",
+    summary="获取用户设备列表",
+    description="""
+    获取当前用户的所有活跃设备列表。
+    
+    权限要求：
+    - 需要有效的Token
+    
+    返回数据：
+    设备列表，每个设备包含以下信息：
+    - device_name: 设备名称
+      - 类型：string
+      - 说明：设备的显示名称，如"iPhone 12"、"Chrome浏览器"等
+      
+    - device_id: 设备ID
+      - 类型：string
+      - 说明：设备的唯一标识符
+      
+    - last_active: 最后活跃时间
+      - 类型：string (ISO 8601格式的日期时间)
+      - 说明：设备最后一次活跃的时间
+      
+    - created_at: 首次登录时间
+      - 类型：string (ISO 8601格式的日期时间)
+      - 说明：设备首次登录的时间
+    
+    可能的错误码：
+    - 401: Token无效
+    - 404: 用户不存在
+    - 1012: 设备不存在
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": [
+            {
+                "device_name": "Chrome Browser",
+                "device_id": "browser-uuid-123",
+                "last_active": "2024-01-02T10:30:00",
+                "created_at": "2024-01-01T00:00:00"
+            },
+            {
+                "device_name": "iPhone 12",
+                "device_id": "iphone-uuid-456",
+                "last_active": "2024-01-02T09:15:00",
+                "created_at": "2024-01-01T12:00:00"
+            }
+        ]
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 1012,
+        "message": "DEVICE_NOT_FOUND",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 只返回未过期的设备token
+    2. last_active时间会在每次请求时更新
+    3. 设备列表可能为空（未登录任何设备时）
+    """
+)
 async def read_user_devices(
     request: Request,
     commons: CommonHeaders = Depends(),
@@ -747,6 +1220,12 @@ async def read_user_devices(
             UserToken.expired == 0
         ).all()
         
+        if not active_tokens:
+            return response(
+                code=ResponseCode.DEVICE_NOT_FOUND,
+                message="DEVICE_NOT_FOUND"
+            )
+        
         logger.debug(f"获取到 {len(active_tokens)} 个活跃设备")
         
         response_data = [
@@ -760,14 +1239,101 @@ async def read_user_devices(
         ]
         
         logger.debug(f"设备列表: {json.dumps(response_data, ensure_ascii=False, default=datetime_handler)}")
-        return response_data
+        return response(data=response_data)
+        
     except Exception as e:
         logger.error(f"获取用户设备列表失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
 # 角色路由
-@character_router.post("/create")
+@character_router.post("/create",
+    summary="创建角色",
+    description="""
+    为当前用户创建一个新的游戏角色。
+    
+    权限要求：
+    - 需要有效的Token
+    - 账号未创建过角色
+    
+    请求参数：
+    - name: 角色名称
+      - 类型：string
+      - 必填：是
+      - 长度：2-20个字符
+      - 说明：角色的显示名称，必须唯一
+      
+    - race: 种族
+      - 类型：integer
+      - 必填：是
+      - 取值：
+        - 1: 人族
+        - 2: 妖族
+        - 3: 鬼族
+        - 4: 仙族
+      
+    - location_id: 出生地点ID
+      - 类型：integer
+      - 必填：是
+      - 取值：
+        - 1001: 长安
+        - 1002: 傲来国
+        - 1003: 天宫
+        - 1004: 灵山
+        - 1005: 地府
+        - 1006: 火焰山
+    
+    可能的错误码：
+    - 400: 参数错误
+    - 401: Token无效
+    - 404: 用户不存在
+    - 2003: 角色数量达到上限
+    - 2004: 角色名已存在
+    
+    请求示例：
+    ```json
+    {
+        "name": "测试角色",
+        "race": 1,
+        "location_id": 1001
+    }
+    ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "message": "角色创建成功",
+            "character_id": 1001,
+            "name": "测试角色",
+            "race": 1,
+            "location": 1001
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 2004,
+        "message": "CHARACTER_NAME_EXISTS",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 每个账号只能创建一个角色
+    2. 角色名必须唯一
+    3. 不同种族有不同的初始属性
+    4. 不同种族有不同的出生地点限制
+    5. 创建角色时会自动创建相关的初始数据（装备栏、好感度等）
+    """
+)
 async def create_character(
     request: Request,
     data: CreateCharacterRequest,
@@ -785,9 +1351,9 @@ async def create_character(
         ).first()
         
         if existing_character:
-            raise HTTPException(
-                status_code=400,
-                detail="已有角色"
+            return response(
+                code=ResponseCode.CHARACTER_MAX_LIMIT,
+                message="CHARACTER_MAX_LIMIT"
             )
         
         # 检查角色名是否已存在
@@ -796,17 +1362,48 @@ async def create_character(
             Character.is_deleted == 0
         ).first()
         if name_exists:
-            raise HTTPException(status_code=400, detail="角色名已存在")
+            return response(
+                code=ResponseCode.CHARACTER_NAME_EXISTS,
+                message="CHARACTER_NAME_EXISTS"
+            )
+            
+        # 验证种族是否有效
+        if data.race not in Race:
+            return response(
+                code=ResponseCode.INVALID_RACE,
+                message="INVALID_RACE"
+            )
+            
+        # 验证出生地点是否有效
+        valid_locations = [
+            LocationID.CHANGAN,
+            LocationID.AOLAIGUO,
+            LocationID.TIANGONG,
+            LocationID.LINGSHAN,
+            LocationID.DIFU,
+            LocationID.HUOYANSHAN
+        ]
+        if data.location_id not in valid_locations:
+            return response(
+                code=ResponseCode.INVALID_LOCATION,
+                message="INVALID_LOCATION"
+            )
         
         # 获取种族初始属性
-        initial_stats = RACE_INITIAL_STATS[data.race]
+        try:
+            initial_stats = RACE_INITIAL_STATS[data.race]
+        except KeyError:
+            return response(
+                code=ResponseCode.INVALID_RACE,
+                message="RACE_STATS_NOT_FOUND"
+            )
         
         # 创建角色
         character = Character(
             account_id=account.id,
             name=data.name,
             race=data.race,
-            current_location=data.location_id,  # 直接使用location_id
+            current_location=data.location_id,
             # 设置初始属性
             max_hp=initial_stats["max_hp"],
             current_hp=initial_stats["max_hp"],
@@ -823,7 +1420,7 @@ async def create_character(
             copper_coins=0,
             created_at=datetime.utcnow(),
             last_login=datetime.utcnow(),
-            is_deleted=0  # 确保设置为未删除
+            is_deleted=0
         )
         
         db.add(character)
@@ -853,27 +1450,107 @@ async def create_character(
         
         db.commit()
         
-        return {
+        return response(data={
             "message": "角色创建成功",
             "character_id": character.id,
             "name": character.name,
             "race": character.race.value,
             "location": character.current_location
-        }
+        })
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"创建角色失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         db.rollback()
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
 # 添加玩家数据查询路由
 class TableRequest(BaseModel):
     table_name: str
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "table_name": "Character"
+            }
+        }
 
-@character_router.post("/query_character_data")
+@character_router.post("/query_character_data",
+    summary="查询角色相关数据",
+    description="""
+    查询当前角色的相关数据表信息。
+    
+    权限要求：
+    - 需要有效的Token
+    - 需要有效的角色
+    
+    请求参数：
+    - table_name: 表名
+      - 类型：string
+      - 必填：是
+      - 取值：
+        - Character: 角色基础信息
+        - Inventory: 背包物品
+        - CharacterEquipment: 装备信息
+        - CharacterQuest: 任务信息
+        - FavorRecord: 好感度记录
+        - Mail: 邮件信息
+    
+    可能的错误码：
+    - 400: 参数错误
+    - 401: Token无效
+    - 404: 角色不存在
+    - 2001: 角色不存在
+    - 2002: 角色已删除
+    
+    请求示例：
+    ```json
+    {
+        "table_name": "Character"
+    }
+    ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "table": "Character",
+            "character_id": 1001,
+            "total": 1,
+            "data": [
+                {
+                    "id": 1001,
+                    "name": "测试角色",
+                    "race": 1,
+                    "level": 10,
+                    ...
+                }
+            ]
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 2001,
+        "message": "CHARACTER_NOT_FOUND",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 只能查询与当前角色相关的数据
+    2. 不同表返回的字段结构不同
+    3. 只返回未删除的记录
+    4. 某些表可能返回空列表（如未接任务时的任务列表）
+    """
+)
 async def query_character_data(
     request: Request,
     data: TableRequest,
@@ -894,11 +1571,17 @@ async def query_character_data(
         ).first()
         
         if not character:
-            raise HTTPException(status_code=404, detail="未找到角色信息")
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="CHARACTER_NOT_FOUND"
+            )
             
         # 获取对应的模型类
         if data.table_name not in CHARACTER_RELATED_MODELS:
-            raise HTTPException(status_code=400, detail="不支持的表名")
+            return response(
+                code=ResponseCode.PARAM_ERROR,
+                message="INVALID_TABLE_NAME"
+            )
             
         model_class = CHARACTER_RELATED_MODELS[data.table_name]
         
@@ -938,19 +1621,20 @@ async def query_character_data(
             response_data.append(item_dict)
             
         logger.debug(f"查询到 {len(response_data)} 条记录")
-        return {
+        return response(data={
             "table": data.table_name,
             "character_id": character.id,
             "total": len(response_data),
             "data": response_data
-        }
+        })
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"查询玩家数据失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
 # 添加AI路由
 @app.post("/api/chat", response_model=ChatResponse, tags=["AI对话"])
@@ -1003,7 +1687,10 @@ async def operate_equipment(
         ).first()
         
         if not character:
-            raise HTTPException(status_code=404, detail="未找到角色信息")
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="CHARACTER_NOT_FOUND"
+            )
             
         # 获取角色装备信息
         equipment = db.query(CharacterEquipment).filter(
@@ -1011,7 +1698,10 @@ async def operate_equipment(
         ).first()
         
         if not equipment:
-            raise HTTPException(status_code=404, detail="未找到装备信息")
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="EQUIPMENT_NOT_FOUND"
+            )
             
         # 槽位ID映射
         slot_map = {
@@ -1023,20 +1713,35 @@ async def operate_equipment(
             EquipmentSlotType.SHOES: "shoes_id"
         }
         
+        if data.slot_type not in slot_map:
+            return response(
+                code=ResponseCode.INVALID_ITEM_DATA,
+                message="INVALID_SLOT_TYPE"
+            )
+        
         slot_field = slot_map[data.slot_type]
         
         if data.operation == EquipmentOperationType.EQUIP:
             if not data.item_id:
-                raise HTTPException(status_code=400, detail="装备操作需要提供物品ID")
+                return response(
+                    code=ResponseCode.INVALID_ITEM_DATA,
+                    message="ITEM_ID_REQUIRED"
+                )
                 
             # 获取物品静态数据
             item_static_data = static_data.get_item_data(data.item_id)
             if not item_static_data:
-                raise HTTPException(status_code=400, detail="物品配置不存在")
+                return response(
+                    code=ResponseCode.ITEM_NOT_FOUND,
+                    message="ITEM_CONFIG_NOT_FOUND"
+                )
                 
             # 检查物品类型是否匹配槽位
             if item_static_data["type"] != data.slot_type.value:
-                raise HTTPException(status_code=400, detail="物品类型与装备槽位不匹配")
+                return response(
+                    code=ResponseCode.INVALID_ITEM_DATA,
+                    message="ITEM_TYPE_NOT_MATCH"
+                )
                 
             # 检查物品是否存在且属于该角色
             item = db.query(Inventory).filter(
@@ -1046,11 +1751,17 @@ async def operate_equipment(
             ).first()
             
             if not item:
-                raise HTTPException(status_code=404, detail="未找到指定物品")
+                return response(
+                    code=ResponseCode.ITEM_NOT_FOUND,
+                    message="ITEM_NOT_FOUND"
+                )
                 
             # 检查物品是否已经装备
             if item.equipped == 1:
-                raise HTTPException(status_code=400, detail="该物品已经装备")
+                return response(
+                    code=ResponseCode.ITEM_EQUIPPED,
+                    message="ITEM_ALREADY_EQUIPPED"
+                )
                 
             # 如果该槽位已有装备，先卸下
             current_equipped = getattr(equipment, slot_field)
@@ -1071,7 +1782,10 @@ async def operate_equipment(
             # 获取当前装备的物品ID
             current_equipped = getattr(equipment, slot_field)
             if not current_equipped:
-                raise HTTPException(status_code=400, detail="该槽位没有装备物品")
+                return response(
+                    code=ResponseCode.ITEM_NOT_EQUIPPED,
+                    message="NO_ITEM_EQUIPPED"
+                )
                 
             # 获取当前装备的物品并更新状态
             current_item = db.query(Inventory).filter(
@@ -1097,6 +1811,11 @@ async def operate_equipment(
                 ).first()
                 if inventory_item:
                     static_info = static_data.get_item_data(inventory_item.item_id)
+                    if not static_info:
+                        return response(
+                            code=ResponseCode.INVALID_ITEM_DATA,
+                            message="ITEM_CONFIG_MISSING"
+                        )
                     equipped_items[slot_type.value] = {
                         "inventory_id": inventory_id,
                         "item_id": inventory_item.item_id,
@@ -1107,21 +1826,22 @@ async def operate_equipment(
                         "durability": inventory_item.durability
                     }
         
-        return {
+        return response(data={
             "status": "success",
-            "message": "装备操作成功",
-            "operation": data.operation,
-            "slot_type": data.slot_type,
+            "message": f"装备{data.operation.value}成功",
+            "operation": data.operation.value,
+            "slot_type": data.slot_type.value,
             "item_id": data.item_id,
             "equipped_items": equipped_items
-        }
+        })
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"装备操作失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
 # 添加物品请求模型
 class ItemEntry(BaseModel):
@@ -1149,7 +1869,104 @@ class ItemAddRequest(BaseModel):
             }
         }
 
-@character_router.post("/inventory/add")
+@character_router.post("/inventory/add",
+    summary="添加物品到背包",
+    description="""
+    向角色背包中添加一个或多个物品。
+    
+    权限要求：
+    - 需要有效的Token
+    - 需要有效的角色
+    
+    请求参数：
+    - items: 物品列表
+      - 类型：array
+      - 必填：是
+      - 每个物品包含：
+        - item_id: 物品ID
+          - 类型：integer
+          - 必填：是
+          - 说明：物品的配置ID
+        - quantity: 数量
+          - 类型：integer
+          - 必填：是
+          - 说明：添加的数量
+          - 范围：1-9999
+    
+    可能的错误码：
+    - 400: 参数错误
+    - 401: Token无效
+    - 2001: 角色不存在
+    - 3001: 物品不存在
+    - 3007: 物品数据无效
+    
+    请求示例：
+    ```json
+    {
+        "items": [
+            {
+                "item_id": 1001,
+                "quantity": 1
+            },
+            {
+                "item_id": 1002,
+                "quantity": 5
+            }
+        ]
+    }
+    ```
+    
+    成功返回示例：
+    ```json
+    {
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "status": "success",
+            "message": "物品添加成功",
+            "character_id": 1001,
+            "added_items": [
+                {
+                    "item_id": 1001,
+                    "name": "青铜剑",
+                    "quantity": 1,
+                    "total_quantity": 1,
+                    "quality": 1,
+                    "type": 1
+                },
+                {
+                    "item_id": 1002,
+                    "name": "回血药水",
+                    "quantity": 5,
+                    "total_quantity": 10,
+                    "quality": 1,
+                    "type": 8
+                }
+            ]
+        }
+    }
+    ```
+    
+    错误返回示例：
+    ```json
+    {
+        "code": 3001,
+        "message": "ITEM_NOT_FOUND",
+        "data": null
+    }
+    ```
+    
+    注意事项：
+    1. 如果物品已存在，会增加数量
+    2. 新物品的初始属性：
+       - 强化等级：0
+       - 耐久度：100
+       - 绑定状态：0（未绑定）
+       - 额外属性：空
+    3. 每个物品的数量必须大于0且不超过9999
+    4. 返回的total_quantity是添加后的总数量
+    """
+)
 async def add_items_to_inventory(
     request: Request,
     data: ItemAddRequest,
@@ -1157,17 +1974,6 @@ async def add_items_to_inventory(
     current_user: Account = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    添加物品到角色背包
-    
-    请求体示例:
-    {
-        "items": [
-            {"item_id": 1001, "quantity": 1},
-            {"item_id": 1002, "quantity": 5}
-        ]
-    }
-    """
     try:
         logger.debug(f"添加物品请求 - 完整信息:")
         logger.debug(f"URL: {request.url}")
@@ -1181,18 +1987,27 @@ async def add_items_to_inventory(
         ).first()
         
         if not character:
-            raise HTTPException(status_code=404, detail="未找到角色信息")
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="CHARACTER_NOT_FOUND"
+            )
             
         added_items = []
         for item_data in data.items:
+            # 验证数量是否合法
+            if not 0 < item_data.quantity <= 9999:
+                return response(
+                    code=ResponseCode.INVALID_ITEM_DATA,
+                    message="INVALID_ITEM_QUANTITY"
+                )
+            
             # 验证物品是否存在于配置中
             item_config = static_data.get_item_data(item_data.item_id)
             if not item_config:
-                raise HTTPException(status_code=400, detail=f"物品ID {item_data.item_id} 不存在")
-                
-            # 检查数量是否合法
-            if item_data.quantity <= 0:
-                raise HTTPException(status_code=400, detail=f"物品 {item_data.item_id} 的数量必须大于0")
+                return response(
+                    code=ResponseCode.ITEM_NOT_FOUND,
+                    message=f"ITEM_NOT_FOUND: {item_data.item_id}"
+                )
                 
             # 查找是否已有该物品
             existing_item = db.query(Inventory).filter(
@@ -1236,19 +2051,20 @@ async def add_items_to_inventory(
                 
         db.commit()
         
-        return {
+        return response(data={
             "status": "success",
             "message": "物品添加成功",
             "character_id": character.id,
             "added_items": added_items
-        }
+        })
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"添加物品失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
 # 软删除请求模型
 class SoftDeleteRequest(BaseModel):
@@ -1417,90 +2233,113 @@ class ItemOperationRequest(BaseModel):
             }
         }
 
-@character_router.post("/item/operate", 
-    summary="物品操作接口",
+@character_router.post("/item/operate",
+    summary="物品操作",
     description="""
-    物品操作接口，支持装备、卸下、使用和丢弃操作。
+    对物品进行操作，包括装备、卸下、使用和丢弃。
     
-    参数说明：
-    - id: 背包物品ID（inventory表中的id）
-    - operation: 操作类型（0-3）
-    - quantity: 使用数量（可选，默认为1）
+    权限要求：
+    - 需要有效的Token
+    - 需要有效的角色
     
-    操作类型：
-    - 0: 装备(EQUIP)
-    - 1: 卸下(UNEQUIP)
-    - 2: 使用(USE)
-    - 3: 丢弃(DISCARD)
+    请求参数：
+    - operation: 操作类型
+      - 类型：integer
+      - 必填：是
+      - 取值：
+        - 0: 装备(EQUIP)
+        - 1: 卸下(UNEQUIP)
+        - 2: 使用(USE)
+        - 3: 丢弃(DISCARD)
+      
+    - id: 物品ID
+      - 类型：integer
+      - 必填：是
+      - 说明：背包中的物品ID（inventory表的id）
+      
+    - quantity: 使用数量
+      - 类型：integer
+      - 必填：否
+      - 默认值：1
+      - 说明：使用物品时的数量
+      - 范围：1-9999
     
-    物品类型：
-    - 1: 武器(WEAPON)
-    - 2: 帽子(HAT)
-    - 3: 衣服(CLOTH)
-    - 4: 饰品(ORNAMENT)
-    - 5: 挂坠(PENDANT)
-    - 6: 鞋子(SHOES)
-    - 7: 任务道具(QUEST)
-    - 8: 药品(POTION)
-    - 9: 食物(FOOD)
-    - 10: 材料(MATERIAL)
-    - 11: 道具(MISC)
+    可能的错误码：
+    - 400: 参数错误
+    - 401: Token无效
+    - 2001: 角色不存在
+    - 3001: 物品不存在
+    - 3002: 物品数量不足
+    - 3003: 物品已装备
+    - 3004: 物品未装备
+    - 3005: 物品不可使用
+    - 3006: 物品绑定状态不符
+    - 3007: 物品数据无效
     
-    属性类型：
-    装备属性：
-    - 1: 物理攻击
-    - 2: 魔法攻击
-    - 3: 物理防御
-    - 4: 魔法防御
-    
-    消耗品属性：
-    - 101: 当前生命值
-    - 102: 当前法力值
-    - 103: 生命值上限
-    - 104: 法力值上限
-    
-    示例请求：
-    1. 装备武器
+    请求示例：
+    1. 装备物品
     ```json
     {
         "operation": 0,
-        "id": 1
+        "id": 1001
     }
     ```
     
-    2. 卸下武器
-    ```json
-    {
-        "operation": 1,
-        "id": 1
-    }
-    ```
-    
-    3. 使用药品（指定数量）
+    2. 使用物品
     ```json
     {
         "operation": 2,
-        "id": 1,
+        "id": 1001,
         "quantity": 5
     }
     ```
     
-    4. 使用药品（默认数量1）
+    成功返回示例：
     ```json
     {
-        "operation": 2,
-        "id": 1
+        "code": 200,
+        "message": "SUCCESS",
+        "data": {
+            "status": "success",
+            "message": "物品操作成功",
+            "operation": 0,
+            "item_id": 1001,
+            "character": {
+                "current_hp": 1000,
+                "max_hp": 1000,
+                "current_mp": 500,
+                "max_mp": 500,
+                "physical_attack": 100,
+                "magic_attack": 80,
+                "physical_defense": 50,
+                "magic_defense": 40
+            }
+        }
     }
     ```
     
-    5. 丢弃物品
+    错误返回示例：
     ```json
     {
-        "operation": 3,
-        "id": 1
+        "code": 3005,
+        "message": "ITEM_NOT_USABLE",
+        "data": null
     }
-    """,
-    response_description="返回操作结果，包含角色状态和装备信息"
+    ```
+    
+    注意事项：
+    1. 装备操作：
+       - 只能装备未装备的物品
+       - 物品类型必须与装备槽位匹配
+       - 装备后会更新角色属性
+    2. 使用操作：
+       - 只能使用消耗品（药品、食物等）
+       - 使用后会更新物品数量
+       - 数量为0时会自动删除物品
+    3. 丢弃操作：
+       - 已装备的物品不能丢弃
+       - 丢弃后物品不可恢复
+    """
 )
 async def operate_item(
     request: Request,
@@ -1522,7 +2361,10 @@ async def operate_item(
         ).first()
         
         if not character:
-            raise HTTPException(status_code=404, detail="未找到角色信息")
+            return response(
+                code=ResponseCode.CHARACTER_NOT_FOUND,
+                message="CHARACTER_NOT_FOUND"
+            )
             
         # 获取物品信息
         inventory_item = db.query(Inventory).filter(
@@ -1532,12 +2374,18 @@ async def operate_item(
         ).first()
         
         if not inventory_item:
-            raise HTTPException(status_code=404, detail="未找到指定物品")
+            return response(
+                code=ResponseCode.ITEM_NOT_FOUND,
+                message="ITEM_NOT_FOUND"
+            )
             
         # 获取物品静态数据
         item_static_data = static_data.get_item_data(inventory_item.item_id)
         if not item_static_data:
-            raise HTTPException(status_code=400, detail="物品配置不存在")
+            return response(
+                code=ResponseCode.INVALID_ITEM_DATA,
+                message="ITEM_CONFIG_NOT_FOUND"
+            )
             
         # 根据操作类型处理
         if data.operation in [ItemOperationType.EQUIP, ItemOperationType.UNEQUIP]:
@@ -1547,7 +2395,10 @@ async def operate_item(
             ).first()
             
             if not equipment:
-                raise HTTPException(status_code=404, detail="未找到装备信息")
+                return response(
+                    code=ResponseCode.CHARACTER_NOT_FOUND,
+                    message="EQUIPMENT_NOT_FOUND"
+                )
                 
             await _operate_equipment(db, character, inventory_item, item_static_data, 
                                   data.operation, equipment)
@@ -1555,16 +2406,25 @@ async def operate_item(
         elif data.operation == ItemOperationType.USE:
             # 检查物品是否可以使用
             if item_static_data.get("use", 0) != 1:
-                raise HTTPException(status_code=400, detail="该物品不可使用")
+                return response(
+                    code=ResponseCode.ITEM_NOT_USABLE,
+                    message="ITEM_NOT_USABLE"
+                )
                 
             # 检查物品类型
             item_type = ItemType(item_static_data["type"])
             if item_type not in [ItemType.POTION, ItemType.FOOD]:
-                raise HTTPException(status_code=400, detail="该物品不是消耗品")
+                return response(
+                    code=ResponseCode.ITEM_NOT_USABLE,
+                    message="ITEM_TYPE_NOT_CONSUMABLE"
+                )
                 
             # 检查数量是否足够
             if inventory_item.quantity < data.quantity:
-                raise HTTPException(status_code=400, detail="物品数量不足")
+                return response(
+                    code=ResponseCode.ITEM_NOT_ENOUGH,
+                    message="ITEM_NOT_ENOUGH"
+                )
                 
             # 应用物品效果
             if "attr" in item_static_data:
@@ -1590,7 +2450,10 @@ async def operate_item(
         else:  # DISCARD
             # 如果物品已装备，不能丢弃
             if inventory_item.equipped == 1:
-                raise HTTPException(status_code=400, detail="已装备的物品不能丢弃")
+                return response(
+                    code=ResponseCode.ITEM_EQUIPPED,
+                    message="ITEM_ALREADY_EQUIPPED"
+                )
                 
             await _soft_delete_record(db, character.id, current_user.id, 
                                     "Inventory", inventory_item.id)
@@ -1646,14 +2509,15 @@ async def operate_item(
             
             response_data["equipped_items"] = equipped_items
         
-        return response_data
+        return response(data=response_data)
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"物品操作失败: {str(e)}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="系统错误，请稍后重试")
+        return response(
+            code=ResponseCode.SYSTEM_ERROR,
+            message="SYSTEM_ERROR"
+        )
 
 # 内部软删除方法
 async def _soft_delete_record(
@@ -1667,11 +2531,17 @@ async def _soft_delete_record(
     内部软删除方法
     """
     if table_name not in CHARACTER_RELATED_MODELS:
-        raise HTTPException(status_code=400, detail=f"不允许删除 {table_name} 表的记录")
+        return response(
+            code=ResponseCode.PARAM_ERROR,
+            message="INVALID_TABLE_NAME"
+        )
         
     model_class = globals()[table_name]
     if not issubclass(model_class, SoftDeleteMixin):
-        raise HTTPException(status_code=400, detail=f"表 {table_name} 不支持软删除")
+        return response(
+            code=ResponseCode.PARAM_ERROR,
+            message="TABLE_NOT_SUPPORT_SOFT_DELETE"
+        )
         
     # 首先检查记录是否存在
     record = db.query(model_class).filter(
@@ -1680,14 +2550,23 @@ async def _soft_delete_record(
     ).first()
     
     if not record:
-        raise HTTPException(status_code=404, detail=f"记录不存在或已被删除")
+        return response(
+            code=ResponseCode.NOT_FOUND,
+            message="RECORD_NOT_FOUND"
+        )
         
     # 然后检查是否有权限删除
     if hasattr(model_class, 'character_id'):
         if record.character_id != character_id:
-            raise HTTPException(status_code=403, detail="无权删除此记录")
+            return response(
+                code=ResponseCode.FORBIDDEN,
+                message="NO_PERMISSION"
+            )
     else:
-        raise HTTPException(status_code=400, detail=f"表 {table_name} 不支持用户删除")
+        return response(
+            code=ResponseCode.PARAM_ERROR,
+            message="TABLE_NOT_SUPPORT_USER_DELETE"
+        )
         
     # 执行软删除
     record.is_deleted = 1
@@ -1717,13 +2596,19 @@ async def _operate_equipment(
     """
     # 检查物品是否可以装备
     if item_static_data.get("use", 0) != 1:
-        raise HTTPException(status_code=400, detail="该物品不可装备")
+        return response(
+            code=ResponseCode.ITEM_NOT_USABLE,
+            message="ITEM_NOT_EQUIPPABLE"
+        )
         
     # 检查物品类型
     item_type = ItemType(item_static_data["type"])
     if item_type not in [ItemType.WEAPON, ItemType.HAT, ItemType.CLOTH, 
                        ItemType.ORNAMENT, ItemType.PENDANT, ItemType.SHOES]:
-        raise HTTPException(status_code=400, detail="该物品不是装备")
+        return response(
+            code=ResponseCode.ITEM_NOT_USABLE,
+            message="ITEM_TYPE_NOT_EQUIPMENT"
+        )
         
     # 槽位映射
     slot_map = {
@@ -1740,7 +2625,10 @@ async def _operate_equipment(
     if operation == ItemOperationType.EQUIP:
         # 检查是否已装备
         if inventory_item.equipped == 1:
-            raise HTTPException(status_code=400, detail="该物品已装备")
+            return response(
+                code=ResponseCode.ITEM_EQUIPPED,
+                message="ITEM_ALREADY_EQUIPPED"
+            )
             
         # 如果该槽位已有装备，先卸下
         current_equipped = getattr(equipment, slot_field)
@@ -1772,7 +2660,10 @@ async def _operate_equipment(
     else:  # UNEQUIP
         # 检查物品是否已装备
         if inventory_item.equipped != 1:
-            raise HTTPException(status_code=400, detail="该物品未装备")
+            return response(
+                code=ResponseCode.ITEM_NOT_EQUIPPED,
+                message="ITEM_NOT_EQUIPPED"
+            )
             
         # 移除装备属性
         if "attr" in item_static_data:
