@@ -17,6 +17,7 @@ from app.utils.static_data import static_data
 from app.utils.response import response, ResponseCode
 import jwt
 from app.auth.token import SECRET_KEY, ALGORITHM
+from app.auth.server import server_router  # 添加这行
 
 # 导入配置
 logger = logging.getLogger(__name__)
@@ -114,11 +115,12 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
-# 创建路由器
-crud_router = APIRouter(prefix="/api", tags=["CRUD操作"])
-auth_router = APIRouter(prefix="/auth", tags=["认证"])
-user_router = APIRouter(prefix="/user", tags=["用户"])
-character_router = APIRouter(prefix="/character", tags=["角色"])
+# 创建路由
+crud_router = APIRouter(prefix="/api/crud", tags=["数据操作"])
+auth_router = APIRouter(prefix="/api/auth", tags=["认证相关"])
+user_router = APIRouter(prefix="/api/user", tags=["用户相关"])
+character_router = APIRouter(prefix="/api/character", tags=["角色相关"])
+admin_router = APIRouter(prefix="/api/admin", tags=["管理相关"])
 
 # 依赖项
 def get_db():
@@ -3164,6 +3166,7 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(character_router)
 app.include_router(admin_router)
+app.include_router(server_router, tags=["服务器相关"])  # 修改这行，移除prefix
 
 # 注册静态文件
 app.mount("/static", StaticFiles(directory="app/admin/static"), name="static")
