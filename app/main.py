@@ -17,7 +17,9 @@ from app.utils.static_data import static_data
 from app.utils.response import response, ResponseCode
 import jwt
 from app.auth.token import SECRET_KEY, ALGORITHM
-from app.auth.server import server_router  # 添加这行
+from app.auth.server import server_router
+from app.auth.account import account_router
+from app.utils.common import CommonHeaders
 
 # 导入配置
 logger = logging.getLogger(__name__)
@@ -33,7 +35,7 @@ logger.info("Database initialized")
 # 导入模型和工具
 from app.models import *
 from app.models import CHARACTER_RELATED_MODELS, __all__ as model_all, SoftDeleteMixin, format_character_data
-from app.utils.password import verify_password
+from app.utils.password import verify_password, hash_password
 import sqlalchemy.exc
 from app.admin.routes import admin_router
 from app.utils.ai_service import ai_service, ChatRequest, ChatResponse
@@ -143,17 +145,7 @@ for model_name in model_all:
         model.metadata.create_all(bind=engine)
         logger.debug(f"已注册并创建表: {model_name}")
 
-# 添加登录请求模型
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-    device_name: str
-    device_id: str
 
-class LogoutRequest(BaseModel):
-    token: str
-    device_name: str
-    device_id: str
 
 class UserRequest(BaseModel):
     token: str
@@ -416,291 +408,6 @@ async def delete_item(
             detail=f"删除失败: {str(e)}"
         )
 
-# 认证路由
-@auth_router.post("/login",
-    summary="用户登录",
-    description="""
-    用户登录接口，支持账号密码登录。
-    
-    权限要求：
-    - 无需Token
-    
-    请求参数：
-    - username: 用户名
-      - 类型：string
-      - 必填：是
-      - 长度：1-50个字符
-      
-    - password: 密码
-      - 类型：string
-      - 必填：是
-      - 长度：6-20个字符
-      
-    - device_name: 设备名称
-      - 类型：string
-      - 必填：是
-      - 说明：用于标识登录设备，如"iPhone 12"、"Chrome浏览器"等
-      
-    - device_id: 设备ID
-      - 类型：string
-      - 必填：是
-      - 说明：设备的唯一标识符
-    
-    可能的错误码：
-    - 1001: 账号不存在
-    - 1002: 账号已禁用
-    - 1003: 密码错误
-    - 1007: 登录失败（其他原因）
-    
-    请求示例：
-    ```json
-    {
-        "username": "test_user",
-        "password": "password123",
-        "device_name": "Chrome Browser",
-        "device_id": "browser-uuid-123"
-    }
-    ```
-    
-    成功返回示例：
-    ```json
-    {
-        "code": 200,
-        "message": "SUCCESS",
-        "data": {
-            "token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-            "account_id": 1001,
-            "username": "test_user",
-            "has_character": true
-        }
-    }
-    ```
-    
-    错误返回示例：
-    ```json
-    {
-        "code": 1003,
-        "message": "PASSWORD_ERROR",
-        "data": null
-    }
-    ```
-    
-    注意事项：
-    1. 同一账号可以在多个设备上登录
-    2. 每次登录都会生成新的token
-    3. token有效期为7天
-    4. 返回的has_character字段表示该账号是否已创建游戏角色
-    """
-)
-async def login(
-    request: Request,
-    login_data: LoginRequest,
-    db: Session = Depends(get_db)
-):
-    try:
-        # 记录完整的请求信息
-        body = await request.body()
-        logger.debug(f"收到登录请求 - 完整请求信息:")
-        logger.debug(f"URL: {request.url}")
-        logger.debug(f"Headers: {dict(request.headers)}")
-        logger.debug(f"Body: {body.decode()}")
-        logger.debug(f"处理后的请求数据: {login_data.dict()}")
-        
-        # 验证设备信息
-        if not login_data.device_id or not login_data.device_name:
-            return response(
-                code=ResponseCode.INVALID_DEVICE_DATA,
-                message="INVALID_DEVICE_DATA"
-            )
-        
-        # 查找用户账号
-        account = db.query(Account).filter(Account.username == login_data.username).first()
-        if not account:
-            logger.error(f"用户不存在: {login_data.username}")
-            return response(
-                code=ResponseCode.ACCOUNT_NOT_FOUND,
-                message="ACCOUNT_NOT_FOUND"
-            )
-            
-        # 检查账号状态
-        if account.is_deleted:
-            logger.error(f"已删除的账号尝试登录: {login_data.username}")
-            return response(
-                code=ResponseCode.ACCOUNT_DISABLED,
-                message="ACCOUNT_DELETED"
-            )
-            
-        if account.status == 2:  # 已封禁
-            logger.error(f"被封禁的账号尝试登录: {login_data.username}")
-            return response(
-                code=ResponseCode.ACCOUNT_DISABLED,
-                message="ACCOUNT_BANNED"
-            )
-            
-        # 验证密码
-        if not verify_password(login_data.password, account.password):
-            logger.error(f"密码错误: username={login_data.username}")
-            return response(
-                code=ResponseCode.PASSWORD_ERROR,
-                message="PASSWORD_ERROR"
-            )
-            
-        logger.debug(f"用户验证成功: {account.username} (ID: {account.id})")
-        
-        # 检查是否有游戏角色
-        has_character = db.query(Character).filter(
-            Character.account_id == account.id,
-            Character.is_deleted == 0
-        ).first() is not None
-        logger.debug(f"用户角色检查: has_character={has_character}")
-        
-        # 创建token
-        token = create_token(db, account.id, login_data.device_name, login_data.device_id)
-        if not token:
-            return response(
-                code=ResponseCode.LOGIN_FAILED,
-                message="TOKEN_CREATE_FAILED"
-            )
-            
-        logger.debug(f"创建token成功: {token[:10]}...")
-        
-        # 更新最后登录时间
-        account.last_login_at = datetime.now()
-        db.commit()
-        
-        return response(data={
-            "token": token,
-            "account_id": account.id,
-            "username": account.username,
-            "has_character": has_character
-        })
-        
-    except Exception as e:
-        logger.error(f"登录过程发生异常: {str(e)}")
-        logger.error(f"异常堆栈: {traceback.format_exc()}")
-        return response(
-            code=ResponseCode.LOGIN_FAILED,
-            message="LOGIN_FAILED"
-        )
-
-@auth_router.post("/logout",
-    summary="用户登出",
-    description="""
-    用户登出接口，使当前设备的token失效。
-    
-    权限要求：
-    - 需要有效的Token
-    
-    请求参数：
-    - token: 当前会话的token
-      - 类型：string
-      - 必填：是
-      
-    - device_name: 设备名称
-      - 类型：string
-      - 必填：是
-      - 说明：登录时使用的设备名称
-      
-    - device_id: 设备ID
-      - 类型：string
-      - 必填：是
-      - 说明：登录时使用的设备ID
-    
-    可能的错误码：
-    - 1004: Token无效
-    - 1006: 设备不匹配
-    - 1008: 登出失败
-    
-    请求示例：
-    ```json
-    {
-        "token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-        "device_name": "Chrome Browser",
-        "device_id": "browser-uuid-123"
-    }
-    ```
-    
-    成功返回示例：
-    ```json
-    {
-        "code": 200,
-        "message": "SUCCESS",
-        "data": {
-            "status": "success",
-            "message": "Logged out successfully"
-        }
-    }
-    ```
-    
-    错误返回示例：
-    ```json
-    {
-        "code": 1004,
-        "message": "TOKEN_INVALID",
-        "data": null
-    }
-    ```
-    
-    注意事项：
-    1. 登出后token将立即失效
-    2. 只会使当前设备的token失效，不影响其他设备的登录状态
-    3. 重复登出无害，会返回成功
-    """
-)
-async def logout(
-    request: Request,
-    logout_data: LogoutRequest,
-    db: Session = Depends(get_db)
-):
-    try:
-        body = await request.body()
-        logger.debug(f"登出请求 - 完整信息:")
-        logger.debug(f"URL: {request.url}")
-        logger.debug(f"Headers: {dict(request.headers)}")
-        logger.debug(f"Body: {body.decode()}")
-        
-        # 验证设备信息
-        if not logout_data.device_id or not logout_data.device_name:
-            return response(
-                code=ResponseCode.INVALID_DEVICE_DATA,
-                message="INVALID_DEVICE_DATA"
-            )
-            
-        # 验证token和设备是否匹配
-        token_record = db.query(UserToken).filter(
-            UserToken.token == logout_data.token,
-            UserToken.device_id == logout_data.device_id,
-            UserToken.device_name == logout_data.device_name,
-            UserToken.expired == 0
-        ).first()
-        
-        if not token_record:
-            return response(
-                code=ResponseCode.DEVICE_NOT_MATCH,
-                message="DEVICE_NOT_MATCH"
-            )
-        
-        # 使token失效
-        if invalidate_token(db, logout_data.token):
-            logger.debug(f"登出成功: token={logout_data.token[:10]}...")
-            return response(data={
-                "status": "success",
-                "message": "Logged out successfully"
-            })
-        
-        logger.error(f"登出失败，无效token: {logout_data.token[:10]}...")
-        return response(
-            code=ResponseCode.TOKEN_INVALID,
-            message="TOKEN_INVALID"
-        )
-        
-    except Exception as e:
-        logger.error(f"登出过程发生异常: {str(e)}")
-        logger.error(f"异常堆栈: {traceback.format_exc()}")
-        return response(
-            code=ResponseCode.LOGOUT_FAILED,
-            message="LOGOUT_FAILED"
-        )
 
 # 创建公共请求头模型
 class CommonHeaders:
@@ -3160,13 +2867,14 @@ async def operate_mail(
         return response(code=ResponseCode.SYSTEM_ERROR, 
                       message="SYSTEM_ERROR")
 
-# 注册路由
+
 app.include_router(crud_router)
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(character_router)
 app.include_router(admin_router)
 app.include_router(server_router, tags=["服务器相关"])  # 修改这行，移除prefix
+app.include_router(account_router)  # 添加这行
 
 # 注册静态文件
 app.mount("/static", StaticFiles(directory="app/admin/static"), name="static")

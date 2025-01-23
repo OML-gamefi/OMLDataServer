@@ -25,6 +25,9 @@ class ResponseCode(int, Enum):
     WALLET_EXISTS = 1011  # 钱包地址已存在
     DEVICE_NOT_FOUND = 1012  # 设备不存在
     INVALID_DEVICE_DATA = 1013  # 设备信息无效
+    OLD_PASSWORD_ERROR = 1013  # 旧密码错误
+    PASSWORD_CHANGE_FAILED = 1014  # 修改密码失败
+    NEW_PASSWORD_INVALID = 1015  # 新密码无效
     
     # 角色相关错误码 (2000-2999)
     CHARACTER_NOT_FOUND = 2001  # 角色不存在
@@ -43,6 +46,7 @@ class ResponseCode(int, Enum):
     ITEM_NOT_USABLE = 3005   # 物品不可使用
     ITEM_BIND_STATUS = 3006  # 物品绑定状态不符
     INVALID_ITEM_DATA = 3007 # 物品数据无效
+    ITEM_BIND_STATUS_ERROR = 3006  # 物品绑定状态不符
     
     # 邮件相关错误码 (4000-4999)
     MAIL_NOT_FOUND = 4001  # 邮件不存在
@@ -51,6 +55,7 @@ class ResponseCode(int, Enum):
     MAIL_CLAIMED = 4004  # 附件已领取
     MAIL_DELETED = 4005  # 邮件已删除
     MAIL_SEND_FAILED = 4006  # 邮件发送失败
+    UNCLAIMED_MAIL_CANNOT_DELETE = 4007  # 未领取的邮件不能删除
 
 # 统一返回方法
 def response(*, code: Union[int, ResponseCode] = ResponseCode.SUCCESS, 
